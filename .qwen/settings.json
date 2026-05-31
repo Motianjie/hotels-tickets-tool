@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(a.xiumius.cn)",
+      "WebFetch(v.xiumius.cn)",
+      "Bash(curl *)",
+      "WebFetch(sd.xiumius.cn)",
+      "WebFetch(www.feishu.cn)",
+      "Read(//Users/xiutongkoon/.nvm/versions/node/v24.14.0/lib/node_modules/@qwen-code/qwen-code/bundled/qc-helper/docs/features/**)",
+      "Bash(which *)",
+      "Bash(grep *)",
+      "Bash(lark-cli *)",
+      "Bash(npx *)",
+      "Bash(npm cache *)",
+      "Bash(sudo *)",
+      "WebFetch(github.com)",
+      "Bash(git clone *)",
+      "Bash(do *)",
+      "Bash(done)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(python3 *)",
+      "Read(//Users/xiutongkoon/**)"
+    ]
+  },
+  "$version": 4
+}
