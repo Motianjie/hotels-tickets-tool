@@ -24,7 +24,8 @@ from src.lark_writer import (
     check_lark_cli,
     load_config,
 )
-from src.poster_ocr import ocr_image, parse_poster_text
+from src.poster_ocr import ocr_image
+from src.ai_helper import ai_extract_surcharge, ai_extract_content, ai_generate_taopiao, ai_extract_all
 
 
 def parse_raw_input(text: str) -> dict:
@@ -81,6 +82,17 @@ def parse_raw_input(text: str) -> dict:
     order_match = re.search(r'下单编号[：:]\s*(\d+)', text)
     if order_match:
         result["下单编号"] = order_match.group(1)
+
+    # 提取售卖时间（从文案中，如"抢购日期：即日起--售完即止"）
+    # 注意：必须匹配"抢购日期"或"售卖时间"，不能匹配"抢购链接"
+    sell_match = re.search(r'(?:抢购日期|售卖时间|售卖日期)[：:]\s*(.+?)(?:\n|$)', text)
+    if sell_match:
+        result["售卖时间"] = sell_match.group(1).strip()
+
+    # 提取可用日期（从文案中，如"使用日期：即日起--2026年10月31日"）
+    avail_match = re.search(r'(?:使用|可用|有效)[日期时间]*[：:]\s*(.+?)(?:\n|$)', text)
+    if avail_match:
+        result["可用日期"] = avail_match.group(1).strip()
 
     # 提取标题行（第一行）
     lines = text.strip().split("\n")
@@ -304,7 +316,19 @@ def generate_taopiao(title: str, content: str = "") -> str:
     if equity_str:
         parts.append(f"｜{equity_str}")
 
-    return "".join(parts)
+    script_result = "".join(parts)
+
+    # ---- AI 兜底 ----
+    # 如果脚本结果缺少关键信息（如没有权益、没有房型），尝试 AI 生成
+    if not equity_str or not fangxing:
+        try:
+            ai_result = ai_generate_taopiao(title, content)
+            if ai_result:
+                return ai_result
+        except Exception:
+            pass
+
+    return script_result
 
 
 def cmd_extract(url: str) -> str:
@@ -324,6 +348,8 @@ def extract_content_items(raw_content: str) -> str:
     """
     从提取的秀米内容中提取套餐包含项。
 
+    先尝试脚本规则提取，如果结果为空，调用 AI 兜底。
+
     支持两种格式：
     1. 【住】【食】【玩】等单字标签格式
     2. "套餐包含"标题下的数字序号列表（1、2、3...）
@@ -333,6 +359,10 @@ def extract_content_items(raw_content: str) -> str:
     """
     # 套餐分类标签关键词（精确匹配，避免子串误匹配）
     package_tags = {'住', '食', '餐', '玩', '游', '赠', '享', '免', '泡', '浸', '畅', '行'}
+
+    # 预处理：将同一行内多个【】标签拆分成多行
+    # 例如 "【住】xxx【住】xxx【玩】xxx" → "【住】xxx\n【住】xxx\n【玩】xxx"
+    raw_content = re.sub(r'(?=【)', '\n', raw_content).strip()
 
     lines = raw_content.split("\n")
     items = []
@@ -388,18 +418,30 @@ def extract_content_items(raw_content: str) -> str:
             if tag in package_tags:
                 items.append(line)
 
-    return "\n".join(items)
+    script_result = "\n".join(items).strip()
+
+    # ---- AI 兜底 ----
+    if not script_result:
+        try:
+            ai_result = ai_extract_content(raw_content)
+            if ai_result:
+                return ai_result
+        except Exception:
+            pass
+
+    return script_result
 
 
 def extract_surcharge(raw_content: str) -> str:
     """
     从秀米原始内容中提取加收信息。
 
-    查找"加收说明"或"加收"段落，提取其中的加收规则原文。
+    先尝试脚本规则提取，如果结果为空或质量差，调用 AI 兜底。
     """
     if not raw_content:
         return ""
 
+    # ---- 脚本规则提取 ----
     lines = raw_content.split("\n")
     surcharge_lines = []
     in_surcharge = False
@@ -408,16 +450,26 @@ def extract_surcharge(raw_content: str) -> str:
         '酒店地址', '酒店接待规则', '周边热门游玩', '交通指南',
         '退款说明', '购买须知',
     ]
+    upgrade_keywords = ['升级', '增订', '前台增订', '前台购买', '可增订', '可选升级']
 
     for line in lines:
         line = line.strip()
         if not line:
             if in_surcharge:
-                # 空行结束加收段落
                 in_surcharge = False
             continue
 
-        if '加收' in line or '加价' in line:
+        is_surcharge_header = (
+            line.startswith('加收') or
+            '加收说明' in line or
+            '加收规则' in line or
+            '加收标准' in line
+        )
+        if is_surcharge_header:
+            in_surcharge = True
+            continue
+
+        if ('加收' in line or '加价' in line or '不加收' in line) and not is_surcharge_header:
             in_surcharge = True
 
         if in_surcharge:
@@ -429,12 +481,29 @@ def extract_surcharge(raw_content: str) -> str:
             if should_stop:
                 in_surcharge = False
                 continue
-            # 跳过"加收说明："这类标题行本身
-            if re.match(r'^加收', line) and '加收' == line[:2] and ('说明' in line or '规则' in line or '标准' in line):
+
+            is_upgrade = any(kw in line for kw in upgrade_keywords)
+            if is_upgrade:
                 continue
+
+            if re.match(r'^\d+[、.．]', line):
+                continue
+
             surcharge_lines.append(line)
 
-    return "\n".join(surcharge_lines)
+    script_result = "\n".join(surcharge_lines).strip()
+
+    # ---- AI 兜底 ----
+    # 如果脚本结果为空，或只有"不加收"等简单信息，尝试 AI 提取
+    if not script_result or script_result in ["不加收", "周末不加收", "平日周末不加收"]:
+        try:
+            ai_result = ai_extract_surcharge(raw_content)
+            if ai_result:
+                return ai_result
+        except Exception:
+            pass
+
+    return script_result
 
 
 def extract_sell_time(raw_content: str) -> str:
@@ -482,16 +551,21 @@ def extract_price(raw_content: str) -> str:
     return ""
 
 
-def calc_settlement(parsed: dict, col_data: dict) -> str:
+def calc_settlement(parsed: dict, col_data: dict, product_type: str = "hotel") -> str:
     """
     计算结算价和利润率。
 
-    基础结算价 = 直播价 - 深度返佣
-    基础利润率 = 深度返佣 / 直播价 - 8%
+    酒店产品：
+        基础结算价 = 直播价 - 深度返佣
+        基础利润率 = 深度返佣 / 直播价 - 8%
+
+    门票产品：
+        基础结算价 = 直播价 - 深度返佣
+        基础利润率 = 深度返佣 / 直播价 - 5%
 
     如果加收列有加收金额，额外计算加收后的结算价和利润率：
-    加收结算价 = (直播价 + 加收金额) - 深度返佣
-    加收利润率 = 深度返佣 / (直播价 + 加收金额) - 8%
+        加收结算价 = (直播价 + 加收金额) - 深度返佣
+        加收利润率 = 深度返佣 / (直播价 + 加收金额) - 平台成本
 
     返回格式：结算价XXX；利润率XX%（加收说明结算价XXX；利润率XX%）
     """
@@ -517,14 +591,16 @@ def calc_settlement(parsed: dict, col_data: dict) -> str:
     if live_num <= 0 or deep_rebate <= 0:
         return ""
 
+    # 根据产品类型选择平台成本
+    platform_cost = 0.08 if product_type == "hotel" else 0.05
+
     # 基础结算
     settlement = live_num - deep_rebate
-    profit_rate = (deep_rebate / live_num) - 0.08
+    profit_rate = (deep_rebate / live_num) - platform_cost
     profit_pct = profit_rate * 100
     result = f"结算价{int(settlement)}；利润率{profit_pct:.1f}%"
 
     # 解析加收信息，提取加收金额
-    # 匹配如"周六加收100元/间/晚"、"加收200元/套"等
     surcharge_amounts = re.findall(r'加收(\d+(?:\.\d+)?)', surcharge)
     if surcharge_amounts:
         extra_parts = []
@@ -532,7 +608,7 @@ def calc_settlement(parsed: dict, col_data: dict) -> str:
             extra = float(amount_str)
             if extra > 0:
                 extra_settlement = (live_num + extra) - deep_rebate
-                extra_profit = (deep_rebate / (live_num + extra)) - 0.08
+                extra_profit = (deep_rebate / (live_num + extra)) - platform_cost
                 extra_pct = extra_profit * 100
                 extra_parts.append(f"加收{int(extra)}结算价{int(extra_settlement)}；利润率{extra_pct:.1f}%")
         if extra_parts:
@@ -547,6 +623,7 @@ def prompt_col_data(parsed: dict, extracted_content: str) -> dict:
 
     # 自动填入
     col_data["填写日期"] = date.today().isoformat()
+    col_data["产品类型"] = ""  # 交互式填写
     col_data["产品信息"] = parsed.get("原始输入", "")
     col_data["套票内容"] = extract_content_items(extracted_content)
     col_data["结算价格&利润率（已除平台）"] = ""  # 留空，后续计算
@@ -562,6 +639,7 @@ def prompt_col_data(parsed: dict, extracted_content: str) -> dict:
 
     # 需要用户填写的字段
     prompt_fields = [
+        ("产品类型", ""),
         ("酒店/景区", default_hotel),
         ("套票名称", default_taopiao),
         ("加收", ""),
@@ -676,7 +754,7 @@ def cmd_check() -> None:
 
 def cmd_poster(image_path: str) -> None:
     """
-    海报模式：识别海报图片 → 解析各字段 → 交互填写 → 写入飞书。
+    海报模式：识别海报图片 → AI 解析 → 直接写入飞书。
     """
     print(f"正在识别海报: {image_path}")
     try:
@@ -685,26 +763,17 @@ def cmd_poster(image_path: str) -> None:
         print(f"❌ OCR 识别失败: {e}")
         sys.exit(1)
 
-    print("\n" + "=" * 50)
-    print("OCR 识别结果:")
-    print("=" * 50)
-    print(text)
-    print("=" * 50)
+    if not text.strip():
+        print("❌ OCR 未识别到文字内容")
+        sys.exit(1)
 
-    # 解析海报文本
-    parsed = parse_poster_text(text)
-    print("\n📋 自动解析结果:")
-    print(f"  标题: {parsed['title']}")
-    print(f"  酒店: {parsed['hotel_name']}")
-    print(f"  价格: {parsed['price']}")
-    print(f"  套餐内容: {parsed['content_items'][:80]}..." if len(parsed['content_items']) > 80 else f"  套餐内容: {parsed['content_items']}")
-    print(f"  加收: {parsed['surcharge']}")
-    print(f"  售卖时间: {parsed['sell_time']}")
-    print(f"  可用日期: {parsed['available_date']}")
+    # 全 AI 解析（海报默认门票产品）
+    print("🤖 AI 正在解析海报内容...")
+    parsed = ai_extract_all(title="", raw_content=text, product_type="ticket")
 
     # 检查 lark-cli
     if not check_lark_cli():
-        print("\n⚠️  lark-cli 未安装或不可用，无法写入飞书表格。")
+        print("⚠️  lark-cli 未安装或不可用，无法写入飞书表格。")
         sys.exit(1)
 
     # 检查配置
@@ -712,75 +781,39 @@ def cmd_poster(image_path: str) -> None:
         config = load_config()
         token = config.get("lark", {}).get("spreadsheet_token", "")
         if not token:
-            print("\n⚠️  飞书表格 token 未配置。")
+            print("⚠️  飞书表格 token 未配置。")
             sys.exit(1)
     except FileNotFoundError:
-        print("\n⚠️  配置文件 config.yaml 不存在。")
+        print("⚠️  配置文件 config.yaml 不存在。")
         sys.exit(1)
 
-    # 构建 col_data 初始值
+    # 构建写入数据
     col_data = {
         "填写日期": date.today().isoformat(),
+        "产品类型": "",
         "酒店/景区": parsed["hotel_name"],
-        "渠道": "",
-        "可上架渠道": "",
-        "产品和房态": text,
-        "套票": generate_taopiao(parsed["title"], parsed["content_items"]),
-        "抖音商品id": "",
-        "抖音链接": "",
-        "内容": parsed["content_items"],
+        "产品信息": text,
+        "套票名称": parsed["taopiao"],
+        "套票内容": parsed["content_items"],
         "加收": parsed["surcharge"],
-        "其他加收": "",
+        "其他加收": parsed["other_surcharge"],
         "售卖时间": parsed["sell_time"],
         "可用日期": parsed["available_date"],
         "对外价格": "",
         "直播价": parsed["price"],
-        "结算价格&利润率": "",
+        "结算价格&利润率（已除平台）": "",
         "备注": "",
-        "头图": "",
+        "海报": "",
     }
 
-    # 交互式补充/修改
-    print("\n请补充或修改以下信息（直接回车使用当前值或跳过）：")
-    print("-" * 40)
-    editable_fields = [
-        ("酒店/景区", col_data["酒店/景区"]),
-        ("渠道", ""),
-        ("可上架渠道", ""),
-        ("套票", col_data["套票"]),
-        ("抖音商品id", ""),
-        ("抖音链接", ""),
-        ("内容", col_data["内容"]),
-        ("加收", col_data["加收"]),
-        ("其他加收", ""),
-        ("售卖时间", col_data["售卖时间"]),
-        ("可用日期", col_data["可用日期"]),
-        ("对外价格", ""),
-        ("直播价", col_data["直播价"]),
-        ("头图", ""),
-    ]
-
-    for field, default in editable_fields:
-        prompt_text = f"{field}"
-        if default:
-            prompt_text += f" [{default}]"
-        prompt_text += ": "
-        value = input(prompt_text).strip()
-        if value:
-            col_data[field] = value
-        elif default:
-            col_data[field] = default
-
-    # 自动计算结算价格&利润率
-    # 构造 parsed 用于 calc_settlement（需要返佣信息）
+    # 自动计算结算价
     parsed_for_calc = {"返佣": ""}
     settlement = calc_settlement(parsed_for_calc, col_data)
     if settlement:
-        col_data["结算价格&利润率"] = settlement
-        print(f"\n📊 自动计算：{settlement}")
+        col_data["结算价格&利润率（已除平台）"] = settlement
 
     # 写入飞书
-    print("\n正在写入飞书表格...")
+    print("正在写入飞书表格...")
     try:
         result = append_row_by_cols(col_data)
         print(f"✅ 写入成功！")

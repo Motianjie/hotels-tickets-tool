@@ -45,6 +45,7 @@ from src.lark_writer import (
     get_sheet_name,
 )
 from src.poster_ocr import ocr_image, parse_poster_text
+from src.ai_helper import ai_extract_all, ai_extract_surcharge, ai_extract_content, ai_generate_taopiao
 
 app = FastAPI(title="hotels/tickets API", version="1.0.0")
 
@@ -64,6 +65,8 @@ app.add_middleware(
 
 class ParseInputRequest(BaseModel):
     raw_text: str
+    mode: str = "hybrid"  # script: 全脚本, ai: 全AI, hybrid: 先脚本后AI兜底
+    product_type: str = "hotel"
 
 
 class ParseInputResponse(BaseModel):
@@ -79,6 +82,7 @@ class ParseInputResponse(BaseModel):
     content_items: str
     raw_content: str
     surcharge: str
+    other_surcharge: str = ""
     sell_time: str
     available_date: str
     price: str
@@ -96,6 +100,7 @@ class OCRResponse(BaseModel):
     price: str
     content_items: str
     surcharge: str
+    other_surcharge: str = ""
     sell_time: str
     available_date: str
     taopiao: str
@@ -109,12 +114,14 @@ class WriteRequest(BaseModel):
 class WriteResponse(BaseModel):
     success: bool
     message: str
+    row_number: int = 0
 
 
 class CalcSettlementRequest(BaseModel):
     live_price: str
     rebate: str
     surcharge: str = ""
+    product_type: str = "hotel"
 
 
 class CalcSettlementResponse(BaseModel):
@@ -155,9 +162,14 @@ async def api_check():
 async def api_parse_input(req: ParseInputRequest):
     """
     解析完整的原始输入（标题+链接+返佣等），提取秀米内容并生成各字段。
-    完全复用 src/main.py 中的 parse_raw_input / generate_taopiao / extract_content_items 逻辑。
+
+    支持三种模式：
+    - script: 全脚本解析
+    - ai: 全 AI 解析
+    - hybrid: 先脚本，后 AI 兜底（默认）
     """
     raw_text = req.raw_text.strip()
+    mode = req.mode
     if not raw_text:
         raise HTTPException(status_code=400, detail="输入内容为空")
 
@@ -167,65 +179,124 @@ async def api_parse_input(req: ParseInputRequest):
     xiumius_url = parsed.get("xiumius_url", "")
     rebate = parsed.get("返佣", "")
 
-    # 2. 提取秀米内容（复用 src/main.py 的 cmd_extract）
+    # 2. 提取秀米内容
     raw_content = ""
     content_items = ""
     if xiumius_url:
         try:
             raw_content = cmd_extract(xiumius_url)
-            content_items = extract_content_items(raw_content)
         except Exception as e:
             raw_content = f"（秀米提取失败: {e}）"
 
     # 从原始输入中提取 🈶 行内容作为套餐权益（当秀米内容为空时的后备）
     you_lines = re.findall(r'🈶(.+)', raw_text)
+    you_content = ""
     if you_lines:
         you_content = "\n".join(f"【享】{line.strip()}" for line in you_lines)
         if not raw_content:
             raw_content = you_content
-        if not content_items:
+
+    # 3. 根据 mode 选择解析方式
+    hotel_name = ""
+    taopiao = ""
+    surcharge = ""
+    other_surcharge = ""
+    sell_time = ""
+    available_date = ""
+    price = ""
+
+    if mode == "ai":
+        # ---- 全 AI 模式 ----
+        print(f"[DEBUG] ai mode: title={repr(title[:80])}, raw_content len={len(raw_content)}")
+        ai_result = ai_extract_all(title, raw_content, product_type=req.product_type)
+        print(f"[DEBUG] ai_result={ai_result}")
+        taopiao = ai_result.get("taopiao", "")
+        content_items = ai_result.get("content_items", "")
+        surcharge = ai_result.get("surcharge", "")
+        other_surcharge = ai_result.get("other_surcharge", "")
+        sell_time = ai_result.get("sell_time", "")
+        available_date = ai_result.get("available_date", "")
+        price = ai_result.get("price", "")
+        hotel_name = ai_result.get("hotel_name", "")
+
+        # AI 没提取到酒店名时，从标题中提取
+        if not hotel_name:
+            hotel_match = re.search(r'【(.+?)】', title)
+            if hotel_match:
+                hotel_name = hotel_match.group(1)
+
+    elif mode == "script":
+        # ---- 全脚本模式 ----
+        content_items = extract_content_items(raw_content) if raw_content else ""
+        if not content_items and you_content:
             content_items = you_content
 
-    # 3. 生成套票（复用 src/main.py 的 generate_taopiao）
-    # 优先用 content_items（提取的【】标签行），没有则用 raw_content
-    taopiao = generate_taopiao(title, content_items or raw_content)
+        taopiao = generate_taopiao(title, content_items or raw_content)
 
-    # 4. 提取酒店名
-    hotel_name = ""
-    hotel_match = re.search(r'【(.+?)】', title)
-    if hotel_match:
-        hotel_name = hotel_match.group(1)
-    else:
-        # 无【】时，从标题中提取包含"酒店"的完整名称
-        # "5星级-清远巧克力天樾王国酒店" → "清远巧克力天樾王国酒店"
-        name_match = re.search(r'(?:[\u4e00-\u9fff]+星级[-\u4e00-\u9fff]*)?([\u4e00-\u9fff]+酒店)', title)
-        if name_match:
-            hotel_name = name_match.group(1)
+        # 提取酒店名
+        hotel_match = re.search(r'【(.+?)】', title)
+        if hotel_match:
+            hotel_name = hotel_match.group(1)
         else:
-            name_match = re.search(r'([\u4e00-\u9fff]+酒店)', title)
+            name_match = re.search(r'(?:[\u4e00-\u9fff]+星级[-\u4e00-\u9fff]*)?([\u4e00-\u9fff]+酒店)', title)
             if name_match:
                 hotel_name = name_match.group(1)
+            else:
+                name_match = re.search(r'([\u4e00-\u9fff]+酒店)', title)
+                if name_match:
+                    hotel_name = name_match.group(1)
+        if not hotel_name:
+            hotel_from_raw = re.search(r'\[红包\].*?([\u4e00-\u9fff]+酒店)', raw_text)
+            if hotel_from_raw:
+                hotel_name = hotel_from_raw.group(1)
+                hotel_name = re.sub(r'^[\u4e00-\u9fff]+星级-', '', hotel_name)
 
-    # 如果标题中没有酒店名，从原始输入中查找 [红包] 行
-    if not hotel_name:
-        hotel_from_raw = re.search(r'\[红包\].*?([\u4e00-\u9fff]+酒店)', raw_text)
-        if hotel_from_raw:
-            hotel_name = hotel_from_raw.group(1)
-            # 去掉 "5星级-" 前缀
-            hotel_name = re.sub(r'^[\u4e00-\u9fff]+星级-', '', hotel_name)
+        surcharge = extract_surcharge(raw_content) if raw_content else ""
+        # 优先从原始文案提取售卖时间和可用日期（文案中常有"抢购日期/使用日期"），
+        # 文案没有再从秀米内容提取
+        sell_time = parsed.get("售卖时间", "") or (extract_sell_time(raw_content) if raw_content else "")
+        available_date = parsed.get("可用日期", "") or (extract_available_date(raw_content) if raw_content else "")
+        price = extract_price(raw_content) if raw_content else ""
 
-    # 5. 从秀米内容自动提取加收、售卖时间、可用日期、价格
-    surcharge = extract_surcharge(raw_content) if raw_content else ""
-    sell_time = extract_sell_time(raw_content) if raw_content else ""
-    available_date = extract_available_date(raw_content) if raw_content else ""
-    price = extract_price(raw_content) if raw_content else ""
+    else:
+        # ---- hybrid 模式（默认：先脚本，后 AI 兜底） ----
+        content_items = extract_content_items(raw_content) if raw_content else ""
+        if not content_items and you_content:
+            content_items = you_content
 
-    # 6. 售卖时间规则：如果为"即日起--售完即止"，改为与可用日期一致
+        taopiao = generate_taopiao(title, content_items or raw_content)
+
+        # 提取酒店名
+        hotel_match = re.search(r'【(.+?)】', title)
+        if hotel_match:
+            hotel_name = hotel_match.group(1)
+        else:
+            name_match = re.search(r'(?:[\u4e00-\u9fff]+星级[-\u4e00-\u9fff]*)?([\u4e00-\u9fff]+酒店)', title)
+            if name_match:
+                hotel_name = name_match.group(1)
+            else:
+                name_match = re.search(r'([\u4e00-\u9fff]+酒店)', title)
+                if name_match:
+                    hotel_name = name_match.group(1)
+        if not hotel_name:
+            hotel_from_raw = re.search(r'\[红包\].*?([\u4e00-\u9fff]+酒店)', raw_text)
+            if hotel_from_raw:
+                hotel_name = hotel_from_raw.group(1)
+                hotel_name = re.sub(r'^[\u4e00-\u9fff]+星级-', '', hotel_name)
+
+        surcharge = extract_surcharge(raw_content) if raw_content else ""
+        # 优先从原始文案提取售卖时间和可用日期（文案中常有"抢购日期/使用日期"），
+        # 文案没有再从秀米内容提取
+        sell_time = parsed.get("售卖时间", "") or (extract_sell_time(raw_content) if raw_content else "")
+        available_date = parsed.get("可用日期", "") or (extract_available_date(raw_content) if raw_content else "")
+        price = extract_price(raw_content) if raw_content else ""
+
+    # 4. 售卖时间规则：如果为"即日起--售完即止"，改为与可用日期一致
     if sell_time and available_date:
         if re.match(r'即日起[\s\-—]*售完即止', sell_time):
             sell_time = available_date
 
-    # 7. 对外价格自动计算：直播价/0.5，取整数
+    # 5. 对外价格自动计算：直播价/0.5，取整数
     external_price = ""
     if price:
         try:
@@ -249,6 +320,7 @@ async def api_parse_input(req: ParseInputRequest):
         raw_content=raw_content,
         external_price=external_price,
         surcharge=surcharge,
+        other_surcharge=other_surcharge,
         sell_time=sell_time,
         available_date=available_date,
         price=price,
@@ -316,19 +388,20 @@ async def api_ocr_with_text(
     if text and text.strip():
         combined_text = text.strip() + "\n" + ocr_text
 
-    parsed = parse_poster_text(combined_text)
-    taopiao = generate_taopiao(parsed["title"], parsed["content_items"])
+    # 全 AI 解析
+    ai_result = ai_extract_all(title="", raw_content=combined_text, product_type="ticket")
 
     return OCRResponse(
         raw_text=combined_text,
-        title=parsed["title"],
-        hotel_name=parsed["hotel_name"],
-        price=parsed["price"],
-        content_items=parsed["content_items"],
-        surcharge=parsed["surcharge"],
-        sell_time=parsed["sell_time"],
-        available_date=parsed["available_date"],
-        taopiao=taopiao,
+        title="",
+        hotel_name=ai_result.get("hotel_name", ""),
+        price=ai_result.get("price", ""),
+        content_items=ai_result.get("content_items", ""),
+        surcharge=ai_result.get("surcharge", ""),
+        other_surcharge=ai_result.get("other_surcharge", ""),
+        sell_time=ai_result.get("sell_time", ""),
+        available_date=ai_result.get("available_date", ""),
+        taopiao=ai_result.get("taopiao", ""),
     )
 
 
@@ -336,10 +409,9 @@ async def api_ocr_with_text(
 async def api_write(req: WriteRequest):
     """
     写入飞书表格。
-    接收完整的 18 列数据，自动计算结算价格&利润率。
-    与 src/main.py 中 prompt_col_data + append_row_by_cols 的流程一致。
+    接收完整的 14 列数据，自动计算结算价格&利润率。
     """
-    row_data = req.row_data
+    row_data = dict(req.row_data)
 
     # 自动填入填写日期
     if not row_data.get("填写日期"):
@@ -365,7 +437,20 @@ async def api_write(req: WriteRequest):
             token = get_spreadsheet_token(config)
             sheet_name = get_sheet_name(config)
         result = append_row_by_cols(row_data, spreadsheet_token=token, sheet_title=sheet_name)
-        return WriteResponse(success=True, message="写入成功")
+        # 从返回结果中提取行号（tableRange 格式如 "a15f24!A126:B126" → 126）
+        row_number = 0
+        try:
+            result_data = json.loads(result) if isinstance(result, str) else result
+            if isinstance(result_data, dict):
+                table_range = (result_data.get("data", {}) or result_data).get("tableRange", "")
+                if table_range:
+                    import re
+                    m = re.search(r'!A(\d+)', table_range)
+                    if m:
+                        row_number = int(m.group(1))
+        except (json.JSONDecodeError, AttributeError, ValueError):
+            pass
+        return WriteResponse(success=True, message="写入成功", row_number=row_number)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"写入失败: {str(e)}")
 
@@ -375,7 +460,7 @@ async def api_calc_settlement(req: CalcSettlementRequest):
     """计算结算价和利润率。"""
     parsed = {"返佣": req.rebate}
     col_data = {"直播价": req.live_price, "加收": req.surcharge}
-    result = calc_settlement(parsed, col_data)
+    result = calc_settlement(parsed, col_data, product_type=req.product_type)
     return CalcSettlementResponse(result=result)
 
 
@@ -395,13 +480,13 @@ async def api_config():
 @app.post("/api/create-sheet")
 async def api_create_sheet():
     """
-    创建新的飞书表格，设置 14 列表头，并更新 config.yaml。
+    创建新的飞书表格，设置 15 列表头，并更新 config.yaml。
     """
     # 1. 创建表格
     headers = [
-        "填写日期", "酒店/景区", "产品信息", "套票名称", "套票内容",
-        "加收", "其他加收", "售卖时间", "可用日期", "对外价格",
-        "直播价", "结算价格&利润率（已除平台）", "备注", "海报",
+        "填写日期", "产品类型", "酒店/景区", "产品信息", "套票名称",
+        "套票内容", "加收", "其他加收", "售卖时间", "可用日期",
+        "对外价格", "直播价", "结算价格&利润率（已除平台）", "备注", "海报",
     ]
     headers_json = json.dumps(headers, ensure_ascii=False)
 
