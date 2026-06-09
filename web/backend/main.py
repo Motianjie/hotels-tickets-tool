@@ -43,8 +43,11 @@ from src.lark_writer import (
     load_config,
     get_spreadsheet_token,
     get_sheet_name,
+    get_sheet_id,
+    _get_header_row,
 )
-from src.poster_ocr import ocr_image, parse_poster_text
+from src.main import ocr_image
+from src.poster_ocr import parse_poster_text
 from src.ai_helper import ai_extract_all, ai_extract_surcharge, ai_extract_content, ai_generate_taopiao
 
 app = FastAPI(title="hotels/tickets API", version="1.0.0")
@@ -65,7 +68,6 @@ app.add_middleware(
 
 class ParseInputRequest(BaseModel):
     raw_text: str
-    mode: str = "hybrid"  # script: 全脚本, ai: 全AI, hybrid: 先脚本后AI兜底
     product_type: str = "hotel"
 
 
@@ -87,6 +89,7 @@ class ParseInputResponse(BaseModel):
     available_date: str
     price: str
     external_price: str = ""
+    packages: list = []  # 门票多套餐列表：[{name, price, rebate, order_id, taopiao, content, ...}]
 
 
 class OCRRequest(BaseModel):
@@ -104,6 +107,8 @@ class OCRResponse(BaseModel):
     sell_time: str
     available_date: str
     taopiao: str
+    rebate: str = ""
+    packages: list = []  # 门票多套餐列表
 
 
 class WriteRequest(BaseModel):
@@ -158,18 +163,99 @@ async def api_check():
     )
 
 
+def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: str = "",
+                          default_sell_time: str = "", default_available: str = "") -> list:
+    """
+    从门票文案中解析多个套餐。
+    返回 [{name, price, rebate, order_id, retail_price, settlement, content, surcharge, available_date}, ...]
+    name 会自动拼接酒店名前缀。
+    content = 套餐特定描述 + 通用权益文案。
+    加收规则：A票（双人套票）周六/日不适用，其他通用。
+    """
+    packages = []
+    order_ids = re.findall(r'编号(\d+)', raw_text)
+    pattern = r'(\d+)返(\d+)'
+    matches = list(re.finditer(pattern, raw_text))
+
+    segments = []
+    for i in range(len(matches)):
+        if i == 0:
+            seg_start = matches[i].start()
+            prefix = raw_text[:seg_start]
+            name_start = max(
+                prefix.rfind('～'),
+                prefix.rfind('~'),
+                prefix.rfind('[强]'),
+                prefix.rfind('\n'),
+            ) + 1
+            if name_start <= 0:
+                name_start = 0
+            segment = raw_text[name_start:matches[i].end()].strip().lstrip('/').lstrip('[强]').lstrip('～').lstrip('~')
+        else:
+            prev_end = matches[i-1].end()
+            id_match = re.search(r'/编号\d+', raw_text[prev_end:])
+            start = prev_end + id_match.end() if id_match else prev_end
+            segment = raw_text[start:matches[i].end()].strip().lstrip('/').lstrip('[强]').lstrip('+')
+        segments.append(segment)
+
+    for i, seg in enumerate(segments):
+        m = re.search(r'(\d+)返(\d+)', seg)
+        if not m:
+            continue
+        pkg_price = m.group(1)
+        pkg_rebate = m.group(2)
+        pkg_name = seg[:m.start()].strip()
+        # 清理名称中的前缀符号和括号
+        pkg_name = re.sub(r'^[~/\\[\]太阳强\s（）()，,、]+', '', pkg_name).strip()
+        # 去掉开头的字母+）或字母+）模式，如 "A票）"
+        pkg_name = re.sub(r'^[A-Da-d]票[）\)]?\s*', '', pkg_name).strip()
+        # 拼接酒店名前缀
+        if hotel_name and not pkg_name.startswith(hotel_name):
+            pkg_name = f"{hotel_name}{pkg_name}"
+        pkg_order_id = order_ids[i] if i < len(order_ids) else ""
+
+        # 生成套餐内容：套餐特定描述 + 通用权益
+        pkg_content = f"{pkg_name}"
+        if common_content:
+            pkg_content += f"\n{common_content}"
+
+        # 加收和可用日期：没有提供就留空
+        pkg_surcharge = ""
+        pkg_available = ""
+
+        try:
+            live_num = float(pkg_price)
+            deep_rebate = float(pkg_rebate)
+            retail_price = int(live_num / 0.7)
+            settlement = live_num - deep_rebate
+            profit_rate = (deep_rebate / live_num) - 0.05
+            settlement_str = f"结算价{int(settlement)}；利润率{profit_rate*100:.1f}%"
+        except (ValueError, ZeroDivisionError):
+            retail_price = 0
+            settlement_str = ""
+
+        packages.append({
+            "name": pkg_name,
+            "price": pkg_price,
+            "rebate": pkg_rebate,
+            "order_id": pkg_order_id,
+            "retail_price": str(retail_price) if retail_price else "",
+            "settlement": settlement_str,
+            "content": pkg_content,
+            "surcharge": pkg_surcharge,
+            "available_date": pkg_available,
+        })
+    return packages
+
+
 @app.post("/api/parse-input", response_model=ParseInputResponse)
 async def api_parse_input(req: ParseInputRequest):
     """
     解析完整的原始输入（标题+链接+返佣等），提取秀米内容并生成各字段。
 
-    支持三种模式：
-    - script: 全脚本解析
-    - ai: 全 AI 解析
-    - hybrid: 先脚本，后 AI 兜底（默认）
+    全 AI 模式：一次调用提取所有字段。
     """
     raw_text = req.raw_text.strip()
-    mode = req.mode
     if not raw_text:
         raise HTTPException(status_code=400, detail="输入内容为空")
 
@@ -196,105 +282,62 @@ async def api_parse_input(req: ParseInputRequest):
         if not raw_content:
             raw_content = you_content
 
-    # 3. 根据 mode 选择解析方式
-    hotel_name = ""
-    taopiao = ""
-    surcharge = ""
-    other_surcharge = ""
-    sell_time = ""
-    available_date = ""
-    price = ""
+    # 3. 全 AI 解析
+    print(f"[DEBUG] ai mode: title={repr(title[:80])}, raw_content len={len(raw_content)}")
+    ai_result = ai_extract_all(title, raw_content, product_type=req.product_type)
+    print(f"[DEBUG] ai_result={ai_result}")
+    taopiao = ai_result.get("taopiao", "")
+    content_items = ai_result.get("content_items", "")
+    surcharge = ai_result.get("surcharge", "")
+    other_surcharge = ai_result.get("other_surcharge", "")
+    sell_time = ai_result.get("sell_time", "")
+    available_date = ai_result.get("available_date", "")
+    price = ai_result.get("price", "")
+    hotel_name = ai_result.get("hotel_name", "")
 
-    if mode == "ai":
-        # ---- 全 AI 模式 ----
-        print(f"[DEBUG] ai mode: title={repr(title[:80])}, raw_content len={len(raw_content)}")
-        ai_result = ai_extract_all(title, raw_content, product_type=req.product_type)
-        print(f"[DEBUG] ai_result={ai_result}")
-        taopiao = ai_result.get("taopiao", "")
-        content_items = ai_result.get("content_items", "")
-        surcharge = ai_result.get("surcharge", "")
-        other_surcharge = ai_result.get("other_surcharge", "")
-        sell_time = ai_result.get("sell_time", "")
-        available_date = ai_result.get("available_date", "")
-        price = ai_result.get("price", "")
-        hotel_name = ai_result.get("hotel_name", "")
+    # 兜底：AI 没提取到价格时，从原文提取"售价"或"价格"
+    if not price:
+        price_match = re.search(r'(?:售价|价格|直播价)[：:]\s*(?:RMB|R|\$)?\s*(\d+(?:\.\d+)?)', raw_text)
+        if price_match:
+            price = price_match.group(1) + "元/套"
 
-        # AI 没提取到酒店名时，从标题中提取
-        if not hotel_name:
-            hotel_match = re.search(r'【(.+?)】', title)
-            if hotel_match:
-                hotel_name = hotel_match.group(1)
+    # 兜底：AI 没提取到返佣时，从原文提取"结算返"
+    rebate = parsed.get("返佣", "")
+    if not rebate:
+        rebate_match = re.search(r'结算返\s*(\d+(?:\.\d+)?)\s*元', raw_text)
+        if rebate_match:
+            rebate = f"深返{rebate_match.group(1)}"
+            parsed["返佣"] = rebate
 
-    elif mode == "script":
-        # ---- 全脚本模式 ----
-        content_items = extract_content_items(raw_content) if raw_content else ""
-        if not content_items and you_content:
-            content_items = you_content
-
-        taopiao = generate_taopiao(title, content_items or raw_content)
-
-        # 提取酒店名
+    # AI 没提取到酒店名时，从标题中提取
+    if not hotel_name:
         hotel_match = re.search(r'【(.+?)】', title)
         if hotel_match:
             hotel_name = hotel_match.group(1)
-        else:
-            name_match = re.search(r'(?:[\u4e00-\u9fff]+星级[-\u4e00-\u9fff]*)?([\u4e00-\u9fff]+酒店)', title)
-            if name_match:
-                hotel_name = name_match.group(1)
+
+    # 门票产品：从文案第一行提取酒店名（~ 前面的部分，去掉"大门票"等后缀）
+    if req.product_type == "ticket":
+        first_line = raw_text.split('\n')[0].strip()
+        name_match = re.match(r'^(.+?)[～~]', first_line)
+        if name_match:
+            raw_name = name_match.group(1).strip()
+            # 去掉"大门票"、"门票"等后缀，提取景区名
+            scenic_match = re.match(r'^(.+?)(?:大门票|门票|景区|旅游)', raw_name)
+            if scenic_match:
+                hotel_name = scenic_match.group(1).strip()
             else:
-                name_match = re.search(r'([\u4e00-\u9fff]+酒店)', title)
-                if name_match:
-                    hotel_name = name_match.group(1)
-        if not hotel_name:
-            hotel_from_raw = re.search(r'\[红包\].*?([\u4e00-\u9fff]+酒店)', raw_text)
-            if hotel_from_raw:
-                hotel_name = hotel_from_raw.group(1)
-                hotel_name = re.sub(r'^[\u4e00-\u9fff]+星级-', '', hotel_name)
+                hotel_name = raw_name
+        elif not hotel_name:
+            # 取第一行前15个字作为酒店名
+            hotel_name = first_line[:15].strip()
 
-        surcharge = extract_surcharge(raw_content) if raw_content else ""
-        # 优先从原始文案提取售卖时间和可用日期（文案中常有"抢购日期/使用日期"），
-        # 文案没有再从秀米内容提取
-        sell_time = parsed.get("售卖时间", "") or (extract_sell_time(raw_content) if raw_content else "")
-        available_date = parsed.get("可用日期", "") or (extract_available_date(raw_content) if raw_content else "")
-        price = extract_price(raw_content) if raw_content else ""
-
-    else:
-        # ---- hybrid 模式（默认：先脚本，后 AI 兜底） ----
-        content_items = extract_content_items(raw_content) if raw_content else ""
-        if not content_items and you_content:
-            content_items = you_content
-
-        taopiao = generate_taopiao(title, content_items or raw_content)
-
-        # 提取酒店名
-        hotel_match = re.search(r'【(.+?)】', title)
-        if hotel_match:
-            hotel_name = hotel_match.group(1)
-        else:
-            name_match = re.search(r'(?:[\u4e00-\u9fff]+星级[-\u4e00-\u9fff]*)?([\u4e00-\u9fff]+酒店)', title)
-            if name_match:
-                hotel_name = name_match.group(1)
-            else:
-                name_match = re.search(r'([\u4e00-\u9fff]+酒店)', title)
-                if name_match:
-                    hotel_name = name_match.group(1)
-        if not hotel_name:
-            hotel_from_raw = re.search(r'\[红包\].*?([\u4e00-\u9fff]+酒店)', raw_text)
-            if hotel_from_raw:
-                hotel_name = hotel_from_raw.group(1)
-                hotel_name = re.sub(r'^[\u4e00-\u9fff]+星级-', '', hotel_name)
-
-        surcharge = extract_surcharge(raw_content) if raw_content else ""
-        # 优先从原始文案提取售卖时间和可用日期（文案中常有"抢购日期/使用日期"），
-        # 文案没有再从秀米内容提取
-        sell_time = parsed.get("售卖时间", "") or (extract_sell_time(raw_content) if raw_content else "")
-        available_date = parsed.get("可用日期", "") or (extract_available_date(raw_content) if raw_content else "")
-        price = extract_price(raw_content) if raw_content else ""
-
-    # 4. 售卖时间规则：如果为"即日起--售完即止"，改为与可用日期一致
-    if sell_time and available_date:
-        if re.match(r'即日起[\s\-—]*售完即止', sell_time):
-            sell_time = available_date
+    # 4. 原始输入模式：如果文案中没有提供日期/加收信息，清空 AI 编造的内容
+    if not any(kw in raw_text for kw in ['售卖时间', '售卖日期', '抢购日期', '使用时间', '有效期', '使用日期', '适用日期', '即日起', '2026', '2025', '2024']):
+        sell_time = ""
+        available_date = ""
+    if not any(kw in raw_text for kw in ['加收', '加价', '周末', '节假日', '平日']):
+        surcharge = ""
+        other_surcharge = ""
 
     # 5. 对外价格自动计算：直播价/0.5，取整数
     external_price = ""
@@ -305,6 +348,20 @@ async def api_parse_input(req: ParseInputRequest):
                 external_price = str(int(price_num / 0.5))
         except ValueError:
             pass
+
+    # 6. 门票产品：从文案中解析多个套餐
+    packages = []
+    if req.product_type == "ticket" and raw_text:
+        # 从文案第一行提取通用权益（~ 后面的内容，但排除直接以【开头的套餐列表）
+        first_line = raw_text.split('\n')[0].strip()
+        common_match = re.search(r'[～~](.+)', first_line)
+        common_content = ""
+        if common_match:
+            after_tilde = common_match.group(1).strip()
+            # 如果 ~ 后面直接是套餐信息（以【开头），则没有通用权益
+            if not after_tilde.startswith('【'):
+                common_content = after_tilde
+        packages = parse_ticket_packages(raw_text, hotel_name=hotel_name, common_content=common_content)
 
     return ParseInputResponse(
         title=title,
@@ -324,6 +381,7 @@ async def api_parse_input(req: ParseInputRequest):
         sell_time=sell_time,
         available_date=available_date,
         price=price,
+        packages=packages,
     )
 
 
@@ -364,6 +422,7 @@ async def api_ocr(file: UploadFile = File(...)):
 async def api_ocr_with_text(
     file: UploadFile = File(...),
     text: Optional[str] = Form(None),
+    product_type: Optional[str] = Form("hotel"),
 ):
     """
     OCR 识别海报图片 + 可选文案内容。
@@ -383,16 +442,341 @@ async def api_ocr_with_text(
 
     os.unlink(tmp_path)
 
-    # 如果有文案内容，合并到 OCR 结果中（文案在前，OCR 结果在后）
-    combined_text = ocr_text
-    if text and text.strip():
-        combined_text = text.strip() + "\n" + ocr_text
+    # 修正百度 OCR 常见识别错误
+    ocr_clean = ocr_text
+    ocr_replacements = {
+        "隐贤5水求季": "",
+        "清凉开泼多": "",
+        "奥特曼": "",
+        "六月限定": "",
+        "主题秀": "",
+        "烟花秀": "",
+        "泼水狂欢": "",
+        "东莞科A隐贤则庄": "东莞4A隐贤山庄",
+        "水灶乐园": "水上乐园",
+        "动的园": "动物园",
+        "幸福四园": "幸福田园",
+        "18顺游乐顶阳": "18项游乐项目",
+        "1⑧个游乐顾目": "18个游乐项目",
+        "嫦贼过山车": "嫦娥过山车",
+        "北极熊肿浪": "北极熊冲浪",
+        "幻影花境": "幻影秘境",
+        "烽火印呢": "烽火印记",
+        "抢购▣期": "抢购日期",
+        "以不": "以下",
+        "套票均泡含": "套票均包含",
+        "1伏小套裹": "",
+        "或大1老)": "",
+        "129149": "",
+        "高空翔": "高空飞翔",
+        "摇头椅": "摇头飞椅",
+        "恐龙车梦": "恐龙飞车",
+    }
+    for old, new in ocr_replacements.items():
+        ocr_clean = ocr_clean.replace(old, new)
 
-    # 全 AI 解析
-    ai_result = ai_extract_all(title="", raw_content=combined_text, product_type="ticket")
+    # 全 AI 解析：文案为主，OCR 结果为辅
+    if text and text.strip():
+        # 文案作为主要内容，OCR 结果作为补充参考
+        ai_raw = text.strip()
+        if ocr_clean.strip():
+            ai_raw += "\n\n【海报原文信息（供参考）】\n" + ocr_clean.strip()
+    else:
+        ai_raw = ocr_clean
+    ai_result = ai_extract_all(title="", raw_content=ai_raw, product_type=product_type)
+
+    # 从 OCR 结果中提取日期信息，覆盖 AI 提取的默认值
+    # 文案+海报模式：海报中的日期信息应该被提取
+    if ocr_text.strip():
+        # 从 OCR 文本中提取"抢购日期"后面的内容作为售卖时间
+        sell_ocr_match = re.search(r'抢购日期[：:]\s*(.+?)(?:\n|$)', ocr_text)
+        if sell_ocr_match:
+            sell_ocr = sell_ocr_match.group(1).strip()
+            # 去掉末尾的【】备注和多余的分号内容
+            sell_ocr = re.sub(r'[；;].*$', '', sell_ocr).strip()
+            sell_ocr = re.sub(r'[【\[].*$', '', sell_ocr).strip()
+            if sell_ocr:
+                ai_result["sell_time"] = sell_ocr
+
+        # 从 OCR 文本中提取"适用日期"后面的内容作为可用日期
+        avail_ocr_match = re.search(r'适用日期[：:]\s*(.+?)(?:\n|$)', ocr_text)
+        if avail_ocr_match:
+            avail_ocr = avail_ocr_match.group(1).strip()
+            # 去掉末尾的【】备注
+            avail_ocr = re.sub(r'[【\[].*$', '', avail_ocr).strip()
+            if avail_ocr:
+                ai_result["available_date"] = avail_ocr
+
+        # 兜底：如果没找到"抢购日期"或"适用日期"，尝试匹配通用日期格式
+        if not ai_result.get("sell_time") and not ai_result.get("available_date"):
+            date_pattern = r'(\d{4}年\d{1,2}月\d{1,2}日\s*[~\-—]\s*\d{4}年\d{1,2}月\d{1,2}日)'
+            ocr_dates = re.findall(date_pattern, ocr_text)
+            if ocr_dates:
+                ai_result["sell_time"] = ocr_dates[0].replace(' ', '')
+                ai_result["available_date"] = ocr_dates[0].replace(' ', '')
+
+    # 售卖时间如果包含"即日起"且没有明确的抢购日期来源，改为与可用日期一致
+    sell = ai_result.get("sell_time", "")
+    if "即日起" in sell and "售完即止" in sell:
+        avail = ai_result.get("available_date", "")
+        if avail:
+            ai_result["sell_time"] = avail
+
+    # 文案+海报模式：海报中的日期/加收信息优先于文案
+    # 如果海报中有日期信息，保留海报提取的日期
+    # 如果海报中有加收信息，保留海报提取的加收
+    # 注意：纯原始输入模式（无海报）时，在 api_parse_input 中处理清空逻辑
+
+    # 多套餐：从AI结果中获取（门票和酒店都走AI多套餐）
+    packages = []
+    ai_packages = ai_result.get("packages", [])
+    if ai_packages:
+        for pkg in ai_packages:
+            # 构建套票内容 = 差异项 + 相同项
+            content_parts = []
+            if pkg.get("diff"):
+                content_parts.append(pkg["diff"])
+            if pkg.get("common"):
+                content_parts.append(pkg["common"])
+            pkg_content = "\n".join(content_parts) if content_parts else (pkg.get("content", "") or ai_result.get("content_items", ""))
+
+            # 清理 OCR 脏文本：去掉英文行、单个字母/数字行、过短的行
+            clean_lines = []
+            for line in pkg_content.split('\n'):
+                line_stripped = line.strip()
+                # 去掉纯英文行（含空格和标点）
+                if line_stripped and re.match(r'^[a-zA-Z\s.,;:!?\'\"-]+$', line_stripped):
+                    continue
+                # 去掉过短的无意义行（1-3个字符且不含中文）
+                if line_stripped and len(line_stripped) <= 3 and not re.search(r'[\u4e00-\u9fff]', line_stripped):
+                    continue
+                # 去掉纯数字行（如"159."、"199"）
+                if line_stripped and re.match(r'^\d+\.?\s*$', line_stripped):
+                    continue
+                clean_lines.append(line)
+            pkg_content = '\n'.join(clean_lines)
+
+            # 从 OCR 文本中提取"项目N选M"等详细项目列表，追加到套票内容
+            if ocr_text.strip():
+                # 匹配"项目N选M"及其后面的详细列表（只匹配括号内的内容）
+                item_match = re.search(r'(项目\d+选\d+[：:：\s]*【[^】]+】)', ocr_text)
+                if not item_match:
+                    item_match = re.search(r'(项目\d+选\d+[：:：\s]*[^\n]+)', ocr_text)
+                if item_match:
+                    item_detail = item_match.group(1).strip()
+                    if item_detail and item_detail not in pkg_content:
+                        pkg_content += "\n" + item_detail
+
+            # 追加海报中的详细权益信息（水上乐园项目、漂流描述、营业时间等）
+            if ocr_text.strip():
+                # 提取"天然山泉水·水上乐园"后面的内容
+                water_match = re.search(r'(天然山泉水·水上乐园[^\n]*)', ocr_text)
+                if water_match:
+                    water_detail = water_match.group(1).strip()
+                    if water_detail and water_detail not in pkg_content:
+                        pkg_content += "\n" + water_detail
+                # 提取漂流描述
+                raft_match = re.search(r'(狂野漂流[^\n]*)', ocr_text)
+                if raft_match:
+                    raft_detail = raft_match.group(1).strip()
+                    if raft_detail and raft_detail not in pkg_content:
+                        pkg_content += "\n" + raft_detail
+                # 提取营业时间
+                time_match = re.search(r'(营业时间[：:][^\n]*)', ocr_text)
+                if time_match:
+                    time_detail = time_match.group(1).strip()
+                    if time_detail and time_detail not in pkg_content:
+                        pkg_content += "\n" + time_detail
+                # 提取注意事项
+                note_match = re.search(r'(注[：:][^\n]*)', ocr_text)
+                if note_match:
+                    note_detail = note_match.group(1).strip()
+                    if note_detail and note_detail not in pkg_content:
+                        pkg_content += "\n" + note_detail
+            # 每个套餐的独立加收
+            pkg_surcharge = pkg.get("surcharge", "").strip()
+            if not pkg_surcharge:
+                pkg_surcharge = ai_result.get("surcharge", "")
+            # 原始输入模式：如果文案中没有加收信息，套餐加收也留空
+            if text and text.strip() and not any(kw in text for kw in ['加收', '加价', '周末', '节假日', '平日']):
+                pkg_surcharge = ""
+
+            # 从文案中匹配返佣（门票产品）
+            pkg_price = pkg.get("price", "")
+            pkg_rebate = ""
+            pkg_order_id = ""
+            pkg_retail_price = ""
+            pkg_settlement = ""
+            if text and text.strip():
+                # 先尝试匹配"深返XX"、"返佣XX"、"反佣XX"格式（所有套餐共用同一个返佣）
+                common_rebate_match = re.search(r'(?:深返|返佣|反佣)(\d+)', text)
+                common_rebate = common_rebate_match.group(1) if common_rebate_match else ""
+
+                # 再匹配"价格返返佣"格式（每个套餐独立返佣）
+                rebate_pattern = r'(\d+)返(\d+)'
+                for m in re.finditer(rebate_pattern, text):
+                    price_str = m.group(1)
+                    rebate_str = m.group(2)
+                    if pkg_price and (price_str == re.sub(r'[^0-9.]', '', pkg_price)):
+                        pkg_rebate = rebate_str
+                        break
+                # 如果没匹配到独立返佣，尝试按顺序匹配
+                if not pkg_rebate:
+                    all_rebates = list(re.finditer(rebate_pattern, text))
+                    pkg_idx = ai_packages.index(pkg)
+                    if pkg_idx < len(all_rebates):
+                        m = all_rebates[pkg_idx]
+                        pkg_price = m.group(1)
+                        pkg_rebate = m.group(2)
+
+                # 如果还是没有返佣，使用公共返佣
+                if not pkg_rebate and common_rebate:
+                    pkg_rebate = common_rebate
+
+                # 提取下单编号
+                order_ids = re.findall(r'编号(\d+)', text)
+                pkg_order_id = order_ids[ai_packages.index(pkg)] if ai_packages.index(pkg) < len(order_ids) else ""
+
+                # 计算结算价
+                if pkg_price and pkg_rebate:
+                    try:
+                        price_clean = re.sub(r'[^0-9.]', '', pkg_price)
+                        live_num = float(price_clean)
+                        deep_rebate = float(pkg_rebate)
+                        # 门票/酒店对外价格计算不同
+                        if product_type == "ticket":
+                            retail_price = int(live_num / 0.7)
+                            platform_cost = 0.05
+                        else:
+                            retail_price = int(live_num / 0.5)
+                            platform_cost = 0.08
+                        settlement = live_num - deep_rebate
+                        profit_rate = (deep_rebate / live_num) - platform_cost
+                        pkg_settlement = f"结算价{int(settlement)}；利润率{profit_rate*100:.1f}%"
+
+                        # 解析加收信息，提取加收金额，计算加收后的结算
+                        surcharge_amounts = re.findall(r'(?:加收|[+＋])(\d+(?:\.\d+)?)', pkg_surcharge)
+                        if surcharge_amounts:
+                            extra_parts = []
+                            for amount_str in surcharge_amounts:
+                                extra = float(amount_str)
+                                if extra > 0:
+                                    extra_settlement = (live_num + extra) - deep_rebate
+                                    extra_profit = (deep_rebate / (live_num + extra)) - platform_cost
+                                    extra_pct = extra_profit * 100
+                                    extra_parts.append(f"加收{int(extra)}结算价{int(extra_settlement)}；利润率{extra_pct:.1f}%")
+                            if extra_parts:
+                                pkg_settlement += "（" + "；".join(extra_parts) + "）"
+
+                        pkg_retail_price = str(retail_price)
+                    except (ValueError, ZeroDivisionError):
+                        pass
+
+                # 兜底：如果文案中有"结算价：XXX元"，直接提取并反推利润率
+                if not pkg_settlement and text and text.strip():
+                    settlement_match = re.search(r'结算价[：:]?\s*(\d+(?:\.\d+)?)\s*元', text)
+                    if settlement_match and pkg_price:
+                        try:
+                            live_num = float(re.sub(r'[^0-9.]', '', pkg_price))
+                            settle_num = float(settlement_match.group(1))
+                            if live_num > 0:
+                                platform_cost = 0.08 if product_type == "hotel" else 0.05
+                                deep_rebate = live_num - settle_num
+                                if deep_rebate > 0:
+                                    profit_rate = (deep_rebate / live_num) - platform_cost
+                                    pkg_settlement = f"结算价{int(settle_num)}；利润率{profit_rate*100:.1f}%"
+                                else:
+                                    pkg_settlement = f"结算价{int(settle_num)}"
+                        except (ValueError, ZeroDivisionError):
+                            pkg_settlement = f"结算价{int(float(settlement_match.group(1)))}"
+
+            # 构建套票名称：【套餐名】景区名~主体内容+差异项
+            pkg_name_raw = pkg.get("name", "")
+            hotel_name = ai_result.get("hotel_name", "")
+            common_items = ai_result.get("common_items", "")
+            pkg_diff = pkg.get("diff", "")
+            # 主体内容取相同项的前60个字
+            main_body = common_items[:60] if common_items else ""
+            # 差异项关键词（去掉"无"、"没有"等无效内容）
+            diff_keyword = ""
+            if pkg_diff and pkg_diff.strip() not in ("无", "没有", ""):
+                diff_keyword = pkg_diff[:30]
+            if main_body:
+                if diff_keyword and diff_keyword not in main_body:
+                    pkg_taopiao_name = f"【{pkg_name_raw}】{hotel_name}~{main_body}+{diff_keyword}"
+                else:
+                    pkg_taopiao_name = f"【{pkg_name_raw}】{hotel_name}~{main_body}"
+            else:
+                pkg_taopiao_name = f"【{pkg_name_raw}】{hotel_name}~{diff_keyword}" if diff_keyword else f"【{pkg_name_raw}】{hotel_name}"
+
+            # 清理价格，去掉非数字字符
+            pkg_price_clean = re.sub(r'[^0-9.]', '', pkg_price) if pkg_price else pkg_price
+
+            packages.append({
+                "name": pkg_taopiao_name,
+                "price": pkg_price_clean,
+                "content": pkg_content,
+                "surcharge": pkg_surcharge,
+                "available_date": ai_result.get("available_date", ""),
+                "rebate": pkg_rebate,
+                "order_id": pkg_order_id,
+                "retail_price": pkg_retail_price,
+                "settlement": pkg_settlement,
+            })
+    elif product_type == "ticket" and text and text.strip():
+        # 兜底：AI没识别出多套餐时，用脚本解析
+        packages = parse_ticket_packages(text.strip())
+
+    # 如果 packages 为空但文案中有结算价，包装成单套餐
+    if not packages and text and text.strip():
+        settlement_match = re.search(r'结算价[：:]?\s*(\d+(?:\.\d+)?)\s*元', text)
+        if settlement_match:
+            pkg_price = ai_result.get("price", "")
+            pkg_settlement = ""
+            if pkg_price:
+                try:
+                    live_num = float(re.sub(r'[^0-9.]', '', pkg_price))
+                    settle_num = float(settlement_match.group(1))
+                    if live_num > 0:
+                        platform_cost = 0.08 if product_type == "hotel" else 0.05
+                        deep_rebate = live_num - settle_num
+                        if deep_rebate > 0:
+                            profit_rate = (deep_rebate / live_num) - platform_cost
+                            pkg_settlement = f"结算价{int(settle_num)}；利润率{profit_rate*100:.1f}%"
+                        else:
+                            pkg_settlement = f"结算价{int(settle_num)}"
+                except (ValueError, ZeroDivisionError):
+                    pkg_settlement = f"结算价{int(float(settlement_match.group(1)))}"
+            else:
+                pkg_settlement = f"结算价{int(float(settlement_match.group(1)))}"
+
+            packages.append({
+                "name": ai_result.get("taopiao", ""),
+                "price": ai_result.get("price", ""),
+                "content": ai_result.get("content_items", ""),
+                "surcharge": ai_result.get("surcharge", ""),
+                "available_date": ai_result.get("available_date", ""),
+                "rebate": "",
+                "order_id": "",
+                "retail_price": "",
+                "settlement": pkg_settlement,
+            })
+
+    # 从文案中提取佣金信息
+    rebate_value = ""
+    if text and text.strip():
+        # 匹配"深返XX"、"返佣XX"、"反佣XX"等格式
+        rebate_match = re.search(r'(?:深返|返佣|反佣)(\d+)', text)
+        if rebate_match:
+            rebate_value = f"深返{rebate_match.group(1)}"
+        else:
+            # 匹配"结算返XX元"
+            rebate_match2 = re.search(r'结算返\s*(\d+(?:\.\d+)?)\s*元', text)
+            if rebate_match2:
+                rebate_value = f"深返{rebate_match2.group(1)}"
 
     return OCRResponse(
-        raw_text=combined_text,
+        raw_text=ai_raw,
         title="",
         hotel_name=ai_result.get("hotel_name", ""),
         price=ai_result.get("price", ""),
@@ -402,6 +786,8 @@ async def api_ocr_with_text(
         sell_time=ai_result.get("sell_time", ""),
         available_date=ai_result.get("available_date", ""),
         taopiao=ai_result.get("taopiao", ""),
+        rebate=rebate_value,
+        packages=packages,
     )
 
 
@@ -409,9 +795,17 @@ async def api_ocr_with_text(
 async def api_write(req: WriteRequest):
     """
     写入飞书表格。
-    接收完整的 14 列数据，自动计算结算价格&利润率。
+    接收完整的列数据，自动计算结算价格&利润率。
+    自动读取表格表头，将结算价填入匹配的列。
     """
     row_data = dict(req.row_data)
+
+    # 调试日志
+    import logging
+    logging.warning(f"[api_write] 收到 row_data keys: {list(row_data.keys())}")
+    for k in row_data:
+        if '结算' in k or '利润率' in k or '直播' in k or '返佣' in k:
+            logging.warning(f"[api_write] {k}={row_data[k]!r}")
 
     # 自动填入填写日期
     if not row_data.get("填写日期"):
@@ -425,7 +819,22 @@ async def api_write(req: WriteRequest):
         parsed_for_calc = {"返佣": rebate}
         settlement = calc_settlement(parsed_for_calc, row_data)
         if settlement:
-            row_data["结算价格&利润率（已除平台）"] = settlement
+            # 动态找到结算价列名
+            token = req.spreadsheet_token
+            if token:
+                try:
+                    sheet_id = get_sheet_id(token, "Sheet1")
+                    headers = _get_header_row(token, sheet_id)
+                    for h in headers:
+                        if "结算" in h or "利润率" in h:
+                            row_data[h] = settlement
+                            break
+                    else:
+                        row_data["结算价格&利润率（已除平台）"] = settlement
+                except Exception:
+                    row_data["结算价格&利润率（已除平台）"] = settlement
+            else:
+                row_data["结算价格&利润率（已除平台）"] = settlement
 
     try:
         # 优先使用请求中传入的 token，否则从 config.yaml 读取
@@ -437,17 +846,12 @@ async def api_write(req: WriteRequest):
             token = get_spreadsheet_token(config)
             sheet_name = get_sheet_name(config)
         result = append_row_by_cols(row_data, spreadsheet_token=token, sheet_title=sheet_name)
-        # 从返回结果中提取行号（tableRange 格式如 "a15f24!A126:B126" → 126）
+        # 从返回结果中提取行号（_row_number 由 lark_writer 注入）
         row_number = 0
         try:
             result_data = json.loads(result) if isinstance(result, str) else result
             if isinstance(result_data, dict):
-                table_range = (result_data.get("data", {}) or result_data).get("tableRange", "")
-                if table_range:
-                    import re
-                    m = re.search(r'!A(\d+)', table_range)
-                    if m:
-                        row_number = int(m.group(1))
+                row_number = result_data.get("_row_number", 0)
         except (json.JSONDecodeError, AttributeError, ValueError):
             pass
         return WriteResponse(success=True, message="写入成功", row_number=row_number)
@@ -464,6 +868,142 @@ async def api_calc_settlement(req: CalcSettlementRequest):
     return CalcSettlementResponse(result=result)
 
 
+class RecalcRequest(BaseModel):
+    spreadsheet_token: str = ""
+
+
+class RecalcResponse(BaseModel):
+    success: bool
+    message: str
+    updated_rows: int = 0
+
+
+@app.post("/api/recalc-settlement", response_model=RecalcResponse)
+async def api_recalc_settlement(req: RecalcRequest):
+    """
+    重新计算表格中已有行的结算价。
+    读取表格中所有行，找到直播价和备注（返佣），重新计算结算价并更新。
+    """
+    token = req.spreadsheet_token
+    if not token:
+        return RecalcResponse(success=False, message="请提供飞书表格链接")
+
+    try:
+        sheet_id = get_sheet_id(token, "Sheet1")
+        headers = _get_header_row(token, sheet_id)
+        if not headers:
+            return RecalcResponse(success=False, message="无法读取表格表头")
+
+        # 找到各列索引
+        live_idx = None
+        settle_idx = None
+        remark_idx = None
+        surcharge_idx = None
+        type_idx = None
+        for i, h in enumerate(headers):
+            if h == "直播价":
+                live_idx = i
+            elif "结算" in h or "利润率" in h:
+                settle_idx = i
+            elif h == "备注":
+                remark_idx = i
+            elif h == "加收":
+                surcharge_idx = i
+            elif h == "产品类型":
+                type_idx = i
+
+        if live_idx is None or settle_idx is None:
+            return RecalcResponse(success=False, message="表格缺少直播价或结算价列")
+
+        # 读取所有行
+        col_letter = chr(65 + max(live_idx, settle_idx, remark_idx or 0, surcharge_idx or 0, type_idx or 0))
+        range_str = f"{sheet_id}!A:{col_letter}"
+        cmd = [
+            "lark-cli", "sheets", "+read",
+            "--spreadsheet-token", token,
+            "--sheet-id", sheet_id,
+            "--range", range_str,
+            "--as", "user",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        data = json.loads(result.stdout)
+        values = data.get("data", {}).get("valueRange", {}).get("values", [])
+
+        if len(values) <= 1:
+            return RecalcResponse(success=False, message="表格中没有数据行")
+
+        updated = 0
+        for row_idx, row in enumerate(values):
+            if row_idx == 0:
+                continue  # 跳过表头
+
+            # 跳过空行
+            if not row or all(not cell for cell in row):
+                continue
+
+            # 如果结算价列已有值，跳过
+            if settle_idx < len(row) and row[settle_idx]:
+                continue
+
+            # 获取直播价
+            live_price = row[live_idx] if live_idx < len(row) else ""
+            if not live_price:
+                continue
+
+            # 从备注中提取返佣
+            rebate = ""
+            if remark_idx is not None and remark_idx < len(row):
+                remark = row[remark_idx] or ""
+                rebate_match = re.search(r'返佣[：:]?\s*(\d+)', remark)
+                if rebate_match:
+                    rebate = rebate_match.group(1)
+
+            if not rebate:
+                continue
+
+            # 获取加收
+            surcharge = row[surcharge_idx] if surcharge_idx is not None and surcharge_idx < len(row) else ""
+
+            # 判断产品类型
+            product_type = "hotel"
+            if type_idx is not None and type_idx < len(row):
+                type_val = row[type_idx] or ""
+                if "门票" in type_val:
+                    product_type = "ticket"
+
+            # 计算结算价
+            parsed = {"返佣": rebate}
+            col_data = {"直播价": live_price, "加收": surcharge}
+            settlement = calc_settlement(parsed, col_data, product_type=product_type)
+            if not settlement:
+                continue
+
+            # 更新该行的结算价列
+            row_num = row_idx + 1  # 1-based
+            settle_col = chr(65 + settle_idx)
+            cell_range = f"{sheet_id}!{settle_col}{row_num}"
+            values_json = json.dumps([[settlement]], ensure_ascii=False)
+            write_cmd = [
+                "lark-cli", "sheets", "+write",
+                "--spreadsheet-token", token,
+                "--sheet-id", sheet_id,
+                "--range", cell_range,
+                "--values", values_json,
+                "--as", "user",
+            ]
+            subprocess.run(write_cmd, capture_output=True, text=True)
+            updated += 1
+
+        return RecalcResponse(
+            success=True,
+            message=f"重新计算完成，已更新 {updated} 行的结算价",
+            updated_rows=updated,
+        )
+
+    except Exception as e:
+        return RecalcResponse(success=False, message=f"重新计算失败: {str(e)}")
+
+
 @app.get("/api/config")
 async def api_config():
     """获取飞书配置信息。"""
@@ -475,6 +1015,21 @@ async def api_config():
         }
     except Exception as e:
         return {"spreadsheet_token": "", "sheet_name": "Sheet1", "error": str(e)}
+
+
+@app.get("/api/headers")
+async def api_headers(spreadsheet_token: str = ""):
+    """读取飞书表格表头。"""
+    try:
+        if not spreadsheet_token:
+            config = load_config()
+            spreadsheet_token = get_spreadsheet_token(config)
+        sheet_name = "Sheet1"
+        sheet_id = get_sheet_id(spreadsheet_token, sheet_name)
+        headers = _get_header_row(spreadsheet_token, sheet_id)
+        return {"headers": headers}
+    except Exception as e:
+        return {"headers": [], "error": str(e)}
 
 
 @app.post("/api/create-sheet")
@@ -523,6 +1078,130 @@ async def api_create_sheet():
         "url": url,
         "message": "表格创建成功",
     }
+
+
+# ============================================================
+# Excel 本地表格 API
+# ============================================================
+
+EXCEL_DIR = project_root / "excel_files"
+EXCEL_DIR.mkdir(exist_ok=True)
+
+# 默认 Excel 文件名（固定，不随日期变化，方便持久化）
+DEFAULT_EXCEL_FILENAME = "上品工具.xlsx"
+DEFAULT_EXCEL_PATH = str(EXCEL_DIR / DEFAULT_EXCEL_FILENAME)
+
+
+class ExcelWriteRequest(BaseModel):
+    row_data: dict
+
+
+class ExcelWriteResponse(BaseModel):
+    success: bool
+    message: str
+    row_number: int = 0
+
+
+@app.post("/api/excel/init")
+async def api_excel_init():
+    """初始化 Excel 文件：如果文件不存在则创建，已存在则跳过。"""
+    from src.excel_writer import create_excel
+    try:
+        if not os.path.exists(DEFAULT_EXCEL_PATH):
+            create_excel(DEFAULT_EXCEL_PATH)
+        return {
+            "success": True,
+            "filename": DEFAULT_EXCEL_FILENAME,
+            "message": "Excel 文件已就绪",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"初始化 Excel 失败: {str(e)}")
+
+
+@app.post("/api/excel/reset")
+async def api_excel_reset():
+    """重置 Excel 文件：强制覆盖，清空所有数据行。"""
+    from src.excel_writer import create_excel
+    try:
+        create_excel(DEFAULT_EXCEL_PATH)
+        return {
+            "success": True,
+            "filename": DEFAULT_EXCEL_FILENAME,
+            "message": "Excel 文件已重置",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重置 Excel 失败: {str(e)}")
+
+
+@app.post("/api/excel/write", response_model=ExcelWriteResponse)
+async def api_excel_write(req: ExcelWriteRequest):
+    """写入一行到 Excel 文件（追加模式）。"""
+    if not os.path.exists(DEFAULT_EXCEL_PATH):
+        raise HTTPException(status_code=400, detail="Excel 文件未初始化，请先调用 /api/excel/init")
+
+    row_data = dict(req.row_data)
+
+    # 自动填入填写日期
+    if not row_data.get("填写日期"):
+        row_data["填写日期"] = date.today().isoformat()
+
+    try:
+        from src.excel_writer import append_row
+        row_number = append_row(DEFAULT_EXCEL_PATH, row_data)
+        return ExcelWriteResponse(
+            success=True,
+            message=f"已写入第 {row_number} 行",
+            row_number=row_number,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"写入 Excel 失败: {str(e)}")
+
+
+@app.get("/api/excel/read")
+async def api_excel_read():
+    """读取 Excel 全部数据，返回表头和行数据。"""
+    if not os.path.exists(DEFAULT_EXCEL_PATH):
+        return {"headers": [], "rows": [], "total_rows": 0}
+
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(DEFAULT_EXCEL_PATH, read_only=True)
+        ws = wb.active
+
+        # 读取表头
+        headers = []
+        for cell in ws[1]:
+            headers.append(cell.value or "")
+
+        # 读取数据行（从第2行开始）
+        rows = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            row_data = []
+            for cell in row:
+                row_data.append(str(cell) if cell is not None else "")
+            rows.append(row_data)
+
+        wb.close()
+        return {
+            "headers": headers,
+            "rows": rows,
+            "total_rows": len(rows),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取 Excel 失败: {str(e)}")
+
+
+@app.get("/api/excel/download")
+async def api_excel_download():
+    """下载 Excel 文件。"""
+    if not os.path.exists(DEFAULT_EXCEL_PATH):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=DEFAULT_EXCEL_PATH,
+        filename=DEFAULT_EXCEL_FILENAME,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 if __name__ == "__main__":

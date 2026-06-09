@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>hotels/tickets 上品工具</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <style>
         :root {
             --primary: #4f46e5;
@@ -144,6 +144,11 @@
             line-height: 1.6;
             border: 1px solid #e2e8f0;
         }
+        /* 加收列分号换行 */
+        textarea[data-key="加收"], textarea[data-key="其他加收"] {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .drop-zone {
             border: 2px dashed #cbd5e1;
             border-radius: 16px;
@@ -214,36 +219,74 @@
     <!-- 填写表格模块 -->
     <div class="card mb-4" id="sheetTargetCard">
         <div class="card-body py-3">
-            <div class="row align-items-center g-2">
+            <!-- 目标切换 -->
+            <div class="row align-items-center g-2 mb-3">
                 <div class="col-auto">
                     <span class="fw-medium" style="font-size:0.875rem;color:#475569;">
-                        <i class="bi bi-table me-1"></i>填写表格：
+                        <i class="bi bi-table me-1"></i>填写目标：
                     </span>
                 </div>
-                <div class="col">
-                    <div class="input-group">
-                        <input type="text" class="form-control" id="sheetTargetInput"
-                               placeholder="粘贴飞书表格链接或 spreadsheet_token">
-                        <button class="btn btn-outline-secondary" type="button" onclick="clearSheetTarget()" title="清除">
-                            <i class="bi bi-x-lg"></i>
+                <div class="col-auto">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <input type="radio" class="btn-check" name="targetMode" id="targetFeishu" value="feishu" autocomplete="off" checked>
+                        <label class="btn btn-outline-primary" for="targetFeishu">
+                            <i class="bi bi-cloud me-1"></i>飞书表格
+                        </label>
+                        <input type="radio" class="btn-check" name="targetMode" id="targetExcel" value="excel" autocomplete="off">
+                        <label class="btn btn-outline-success" for="targetExcel">
+                            <i class="bi bi-file-earmark-excel me-1"></i>本地Excel
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 飞书模式 -->
+            <div id="feishuTargetPanel">
+                <div class="row align-items-center g-2">
+                    <div class="col">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="sheetTargetInput"
+                                   placeholder="粘贴飞书表格链接">
+                            <button class="btn btn-outline-secondary" type="button" onclick="clearSheetTarget()" title="清除">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                            <button class="btn btn-outline-info" type="button" onclick="openSheetTarget()" title="打开链接">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="rememberSheetCheck">
+                            <label class="form-check-label" for="rememberSheetCheck" style="font-size:0.875rem;">记住</label>
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-outline-primary" onclick="createNewSheet()">
+                            <i class="bi bi-plus-circle me-1"></i>新建飞书表格
                         </button>
                     </div>
-                </div>
-                <div class="col-auto">
-                    <div class="form-check mb-0">
-                        <input class="form-check-input" type="checkbox" id="rememberSheetCheck">
-                        <label class="form-check-label" for="rememberSheetCheck" style="font-size:0.875rem;">记住</label>
+                    <div class="col-auto" style="min-width:0;">
+                        <span class="badge bg-light text-secondary" id="sheetStatus" style="font-size:0.8rem;">
+                            <i class="bi bi-dash-circle me-1"></i>未设置
+                        </span>
                     </div>
                 </div>
-                <div class="col-auto">
-                    <button class="btn btn-outline-primary" onclick="createNewSheet()">
-                        <i class="bi bi-plus-circle me-1"></i>新建表格
-                    </button>
-                </div>
-                <div class="col-auto">
-                    <span class="badge bg-light text-secondary" id="sheetStatus" style="font-size:0.8rem;">
-                        <i class="bi bi-dash-circle me-1"></i>未设置
-                    </span>
+            </div>
+
+            <!-- Excel 模式 -->
+            <div id="excelTargetPanel" class="hidden">
+                <div class="row align-items-center g-2">
+                    <div class="col-auto">
+                        <span class="badge bg-light text-secondary" id="excelStatus" style="font-size:0.8rem;">
+                            <i class="bi bi-dash-circle me-1"></i>未初始化
+                        </span>
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-outline-danger btn-sm" onclick="resetExcelFile()">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>重置表格
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -264,7 +307,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-6">
             <div class="card mode-card p-3" data-mode="poster" onclick="switchMode('poster')">
                 <div class="d-flex align-items-center gap-3">
                     <div class="mode-icon" style="background:#fef3c7;color:#d97706;">
@@ -272,20 +315,7 @@
                     </div>
                     <div>
                         <div class="fw-bold">海报识别模式</div>
-                        <small class="text-muted">上传海报图片，OCR 自动识别</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card mode-card p-3" data-mode="manual" onclick="switchMode('manual')">
-                <div class="d-flex align-items-center gap-3">
-                    <div class="mode-icon" style="background:#f0fdf4;color:#16a34a;">
-                        <i class="bi bi-pencil-square"></i>
-                    </div>
-                    <div>
-                        <div class="fw-bold">手动输入模式</div>
-                        <small class="text-muted">直接填写全部 18 列数据</small>
+                        <small class="text-muted">文案+上传海报图片，OCR 自动识别</small>
                     </div>
                 </div>
             </div>
@@ -301,38 +331,21 @@
                 </span>
                 <div class="btn-group btn-group-sm me-4" role="group">
                     <input type="radio" class="btn-check" name="productType" id="ptHotel" value="hotel" autocomplete="off" checked>
-                    <label class="btn btn-outline-secondary" for="ptHotel">
+                    <label class="btn btn-outline-primary" for="ptHotel">
                         <i class="bi bi-building me-1"></i>酒店产品
                     </label>
                     <input type="radio" class="btn-check" name="productType" id="ptTicket" value="ticket" autocomplete="off">
-                    <label class="btn btn-outline-secondary" for="ptTicket">
+                    <label class="btn btn-outline-success" for="ptTicket">
                         <i class="bi bi-ticket me-1"></i>门票产品
-                    </label>
-                    <input type="radio" class="btn-check" name="productType" id="ptOther" value="other" autocomplete="off">
-                    <label class="btn btn-outline-secondary" for="ptOther">
-                        <i class="bi bi-three-dots me-1"></i>其他
                     </label>
                 </div>
                 <span class="fw-medium" style="font-size:0.875rem;color:#475569;">
                     <i class="bi bi-gear me-1"></i>解析模式：
                 </span>
                 <div class="btn-group btn-group-sm" role="group">
-                    <input type="radio" class="btn-check" name="parseMode" id="modeAI" value="ai" autocomplete="off" checked>
-                    <label class="btn btn-outline-primary" for="modeAI">
-                        <i class="bi bi-robot me-1"></i>全 AI
-                    </label>
-                    <input type="radio" class="btn-check" name="parseMode" id="modeHybrid" value="hybrid" autocomplete="off">
-                    <label class="btn btn-outline-primary" for="modeHybrid">
-                        <i class="bi bi-arrow-left-right me-1"></i>混合（脚本→AI兜底）
-                    </label>
-                    <input type="radio" class="btn-check" name="parseMode" id="modeScript" value="script" autocomplete="off">
-                    <label class="btn btn-outline-primary" for="modeScript">
-                        <i class="bi bi-code-slash me-1"></i>全脚本
-                    </label>
+                    <input type="radio" class="btn-check" name="parseMode" id="pmAI" value="ai" autocomplete="off" checked>
+                    <label class="btn btn-outline-info" for="pmAI">全AI</label>
                 </div>
-                <small class="text-muted" id="parseModeHint">
-                    <i class="bi bi-info-circle me-1"></i>全部字段由 AI 一次调用提取，不经过脚本规则
-                </small>
             </div>
         </div>
     </div>
@@ -384,27 +397,35 @@
         </div>
     </div>
 
-    <!-- ========== 手动输入模式 ========== -->
-    <div id="panel-manual" class="panel hidden">
+    <!-- ========== Excel 预览区域 ========== -->
+    <div id="excelPreviewPanel" class="hidden">
         <div class="card">
-            <div class="card-header">
-                <i class="bi bi-pencil-square me-2"></i>手动填写
-            </div>
-            <div class="card-body">
-                <div class="section-title">基础信息</div>
-                <div class="column-grid" id="manualForm"></div>
-                <div class="mt-3">
-                    <button class="btn btn-primary" onclick="writeManual()" id="btnWriteManual">
-                        <i class="bi bi-send me-1"></i>写入飞书
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel 数据预览
+                    <span class="badge bg-secondary ms-2" id="excelRowCount">0 行</span>
+                </span>
+                <div>
+                    <span id="excelOverflowWarning" class="text-danger me-2 hidden" style="font-size:0.85rem;">
+                        <i class="bi bi-exclamation-triangle me-1"></i>已超过15行，请下载表格到本地再重新填写
+                    </span>
+                    <button class="btn btn-success btn-sm" onclick="downloadExcel()">
+                        <i class="bi bi-download me-1"></i>下载 Excel
                     </button>
                 </div>
+            </div>
+            <div class="card-body p-0" style="overflow-x:auto;">
+                <table class="table table-bordered table-striped table-sm mb-0" id="excelPreviewTable">
+                    <thead id="excelPreviewHead"></thead>
+                    <tbody id="excelPreviewBody"></tbody>
+                </table>
             </div>
         </div>
     </div>
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
 <script>
 // ============================================================
 // 配置
@@ -418,8 +439,8 @@ const COLUMNS = [
     { key: '产品信息', label: '产品信息', type: 'textarea' },
     { key: '套票名称', label: '套票名称', type: 'text', required: true },
     { key: '套票内容', label: '套票内容', type: 'textarea', required: true },
-    { key: '加收', label: '加收', type: 'text' },
-    { key: '其他加收', label: '其他加收', type: 'text' },
+    { key: '加收', label: '加收', type: 'textarea' },
+    { key: '其他加收', label: '其他加收', type: 'textarea' },
     { key: '售卖时间', label: '售卖时间', type: 'text' },
     { key: '可用日期', label: '可用日期', type: 'text' },
     { key: '对外价格', label: '对外价格', type: 'text' },
@@ -465,34 +486,185 @@ function getToday() {
 // 模式切换
 // ============================================================
 
-function getParseMode() {
-    const selected = document.querySelector('input[name="parseMode"]:checked');
-    return selected ? selected.value : 'hybrid';
-}
-
 function getProductType() {
     const selected = document.querySelector('input[name="productType"]:checked');
     return selected ? selected.value : 'hotel';
 }
-
-// 解析模式切换时更新提示文字
-document.querySelectorAll('input[name="parseMode"]').forEach(radio => {
-    radio.addEventListener('change', function() {
-        const hint = document.getElementById('parseModeHint');
-        const hints = {
-            script: '<i class="bi bi-info-circle me-1"></i>仅使用脚本规则提取，不调用 AI',
-            ai: '<i class="bi bi-info-circle me-1"></i>全部字段由 AI 一次调用提取，不经过脚本规则',
-            hybrid: '<i class="bi bi-info-circle me-1"></i>先脚本规则提取，提取不到时调用 AI 兜底',
-        };
-        hint.innerHTML = hints[this.value] || hints.hybrid;
-    });
-});
 
 function switchMode(mode) {
     document.querySelectorAll('.mode-card').forEach(el => el.classList.remove('active'));
     document.querySelector(`.mode-card[data-mode="${mode}"]`).classList.add('active');
     document.querySelectorAll('.panel').forEach(el => el.classList.add('hidden'));
     document.getElementById(`panel-${mode}`).classList.remove('hidden');
+}
+
+// ============================================================
+// 填写目标切换（飞书 / Excel）
+// ============================================================
+
+function getTargetMode() {
+    const selected = document.querySelector('input[name="targetMode"]:checked');
+    return selected ? selected.value : 'feishu';
+}
+
+document.querySelectorAll('input[name="targetMode"]').forEach(el => {
+    el.addEventListener('change', function() {
+        const isFeishu = this.value === 'feishu';
+        document.getElementById('feishuTargetPanel').classList.toggle('hidden', !isFeishu);
+        document.getElementById('excelTargetPanel').classList.toggle('hidden', isFeishu);
+    });
+});
+
+// ============================================================
+// Excel 文件操作
+// ============================================================
+
+const MAX_PREVIEW_ROWS = 15;
+
+async function initExcel() {
+    // 重试最多3次，等待后端就绪
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const resp = await fetch(`${API_BASE}/api/excel/init`, { method: 'POST' });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || '初始化 Excel 失败');
+            }
+            const result = await resp.json();
+            updateExcelStatus(result.filename);
+            await refreshExcelPreview();
+            return;
+        } catch (e) {
+            if (attempt < 3) {
+                await new Promise(r => setTimeout(r, 1000));
+            } else {
+                console.error('[Excel] 初始化失败:', e.message);
+            }
+        }
+    }
+}
+
+async function resetExcelFile() {
+    if (!confirm('确定要重置表格吗？所有已填写的数据将被清空。')) return;
+    try {
+        const resp = await fetch(`${API_BASE}/api/excel/reset`, { method: 'POST' });
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || '重置 Excel 失败');
+        }
+        const result = await resp.json();
+        updateExcelStatus(result.filename);
+        await refreshExcelPreview();
+        showToast('✅ 表格已重置', 'success');
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+function updateExcelStatus(filename) {
+    const status = document.getElementById('excelStatus');
+    if (filename) {
+        status.innerHTML = `<i class="bi bi-check-circle-fill text-success me-1"></i>${filename}`;
+    } else {
+        status.innerHTML = '<i class="bi bi-dash-circle me-1"></i>未初始化';
+    }
+}
+
+async function refreshExcelPreview() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/excel/read`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        const panel = document.getElementById('excelPreviewPanel');
+        const head = document.getElementById('excelPreviewHead');
+        const body = document.getElementById('excelPreviewBody');
+        const rowCount = document.getElementById('excelRowCount');
+        const warning = document.getElementById('excelOverflowWarning');
+
+        if (!data.headers || data.headers.length === 0) {
+            panel.classList.add('hidden');
+            return;
+        }
+
+        // 显示面板
+        panel.classList.remove('hidden');
+
+        // 更新行数
+        rowCount.textContent = `${data.total_rows} 行`;
+
+        // 超过15行提示
+        if (data.total_rows > MAX_PREVIEW_ROWS) {
+            warning.classList.remove('hidden');
+        } else {
+            warning.classList.add('hidden');
+        }
+
+        // 渲染表头
+        head.innerHTML = '<tr>' + data.headers.map(h => `<th>${h}</th>`).join('') + '</tr>';
+
+        // 渲染数据行（最多显示最近 MAX_PREVIEW_ROWS 行）
+        const displayRows = data.rows.slice(-MAX_PREVIEW_ROWS);
+        body.innerHTML = displayRows.map(row => {
+            return '<tr>' + row.map(cell => `<td>${cell}</td>`).join('') + '</tr>';
+        }).join('');
+    } catch (e) {
+        console.error('[Excel] 刷新预览失败:', e.message);
+    }
+}
+
+async function downloadExcel() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/excel/download`);
+        if (!resp.ok) throw new Error('文件不存在');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = '上品工具.xlsx';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showToast('下载失败: ' + e.message, 'error');
+    }
+}
+
+// ============================================================
+// 写入目标分发
+// ============================================================
+
+async function writeToTarget(data, btnId) {
+    const mode = getTargetMode();
+    if (mode === 'feishu') {
+        await writeToFeishu(data, btnId);
+    } else {
+        await writeToExcel(data, btnId);
+    }
+}
+
+async function writeToExcel(data, btnId) {
+    setLoading(btnId, true);
+    try {
+        const resp = await fetch(`${API_BASE}/api/excel/write`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ row_data: data }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || '写入 Excel 失败');
+        }
+        const result = await resp.json();
+
+        // 刷新预览
+        await refreshExcelPreview();
+
+        showToast(`✅ 已写入 Excel 第 ${result.row_number} 行`, 'success');
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        setLoading(btnId, false);
+    }
 }
 
 // ============================================================
@@ -503,7 +675,7 @@ function buildForm(containerId, data = {}, editable = true) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
     COLUMNS.forEach(col => {
-        const value = data[col.key] || '';
+        let value = data[col.key] || '';
         const div = document.createElement('div');
         const required = col.required ? '<span class="text-danger">*</span>' : '';
         if (col.type === 'textarea') {
@@ -512,6 +684,10 @@ function buildForm(containerId, data = {}, editable = true) {
             textarea.rows = 3;
             textarea.dataset.key = col.key;
             if (!editable) textarea.readOnly = true;
+            // 加收列分号换行显示
+            if (col.key === '加收' || col.key === '其他加收') {
+                value = value.replace(/；/g, '；\n').replace(/;/g, ';\n');
+            }
             textarea.value = value;
             const label = document.createElement('label');
             label.className = 'form-label';
@@ -549,12 +725,27 @@ async function parseRawInput() {
     const rawText = document.getElementById('rawInput').value.trim();
     if (!rawText) { showToast('请粘贴原始输入内容', 'warning'); return; }
 
-    // 检查是否已设置飞书表格
-    const token = getSheetToken();
-    if (!token) {
-        showToast('请先在顶部设置飞书表格链接', 'warning');
-        document.getElementById('sheetTargetInput').focus();
-        return;
+    // 检查目标是否已设置
+    const mode = getTargetMode();
+    if (mode === 'feishu') {
+        const token = getSheetToken();
+        if (!token) {
+            showToast('请先在顶部设置飞书表格链接', 'warning');
+            document.getElementById('sheetTargetInput').focus();
+            return;
+        }
+    } else {
+        // Excel 模式：检查文件是否存在
+        const checkResp = await fetch(`${API_BASE}/api/excel/read`);
+        if (!checkResp.ok) {
+            showToast('Excel 文件未初始化', 'warning');
+            return;
+        }
+        const checkData = await checkResp.json();
+        if (!checkData.headers || checkData.headers.length === 0) {
+            showToast('Excel 文件未初始化', 'warning');
+            return;
+        }
     }
 
     setLoading('btnParse', true);
@@ -564,7 +755,7 @@ async function parseRawInput() {
         const parseResp = await fetch(`${API_BASE}/api/parse-input`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ raw_text: rawText, mode: getParseMode(), product_type: getProductType() }),
+            body: JSON.stringify({ raw_text: rawText, product_type: getProductType() }),
         });
         if (!parseResp.ok) {
             const err = await parseResp.json();
@@ -575,64 +766,152 @@ async function parseRawInput() {
         // 2. 构建写入数据
         const productType = getProductType();
         const productTypeLabel = { hotel: '酒店产品', ticket: '门票产品', other: '其他' }[productType] || '酒店产品';
-        const data = {
-            '填写日期': getToday(),
-            '产品类型': productTypeLabel,
-            '酒店/景区': result.hotel_name,
-            '产品信息': rawText,
-            '套票名称': result.taopiao,
-            '套票内容': result.content_items,
-            '加收': result.surcharge || '',
-            '其他加收': result.other_surcharge || '',
-            '售卖时间': result.sell_time || '',
-            '可用日期': result.available_date || '',
-            '对外价格': result.external_price || '',
-            '直播价': result.price || '',
-            '结算价格&利润率（已除平台）': '',
-            '备注': '',
-            '海报': '',
-        };
 
-        if (result.rebate) {
-            data['备注'] = `返佣：${result.rebate}`;
+        // 门票/酒店产品有多套餐时，每个套餐写一行
+        const rows = [];
+        if (result.packages && result.packages.length > 0) {
+            for (const pkg of result.packages) {
+                const row = {
+                    '填写日期': getToday(),
+                    '产品类型': productTypeLabel,
+                    '酒店/景区': result.hotel_name,
+                    '产品信息': rawText,
+                    '套票名称': pkg.name,
+                    '套票内容': pkg.content || result.content_items,
+                    '加收': pkg.surcharge || result.surcharge || '',
+                    '其他加收': result.other_surcharge || '',
+                    '售卖时间': pkg.available_date || result.sell_time || '',
+                    '可用日期': pkg.available_date || result.available_date || '',
+                    '对外价格': pkg.retail_price || '',
+                    '直播价': pkg.price || '',
+                    '结算价格&利润率（已除平台）': pkg.settlement || '',
+                    '备注': pkg.rebate ? `返佣：${pkg.rebate}` : (pkg.order_id ? `下单编号：${pkg.order_id}` : ''),
+                    '海报': '',
+                };
+                rows.push(row);
+            }
+        } else {
+            // 单行模式（酒店产品/其他/无多套餐的门票）
+
+            // 兜底：AI 没提取到价格时，从原文提取"售价"或"价格"
+            let livePrice = result.price || '';
+            if (!livePrice) {
+                const priceMatch = rawText.match(/(?:售价|价格|直播价)[：:]\s*(?:RMB|R|\$)?\s*(\d+(?:\.\d+)?)/);
+                if (priceMatch) {
+                    livePrice = priceMatch[1] + '元/套';
+                }
+            }
+
+            // 兜底：AI 没提取到返佣时，从原文提取"结算返"或"返佣"
+            let rebate = result.rebate || '';
+            if (!rebate) {
+                const rebateMatch = rawText.match(/结算返\s*(\d+(?:\.\d+)?)\s*元/);
+                if (rebateMatch) {
+                    rebate = `深返${rebateMatch[1]}`;
+                }
+            }
+
+            const data = {
+                '填写日期': getToday(),
+                '产品类型': productTypeLabel,
+                '酒店/景区': result.hotel_name,
+                '产品信息': rawText,
+                '套票名称': result.taopiao,
+                '套票内容': result.content_items,
+                '加收': result.surcharge || '',
+                '其他加收': result.other_surcharge || '',
+                '售卖时间': result.sell_time || '',
+                '可用日期': result.available_date || '',
+                '对外价格': result.external_price || '',
+                '直播价': livePrice,
+                '结算价格&利润率（已除平台）': '',
+                '备注': '',
+                '海报': '',
+            };
+
+            if (rebate) {
+                data['备注'] = `返佣：${rebate}`;
+            }
+
+            // 计算结算价
+            if (livePrice && rebate) {
+                try {
+                    const calcResp = await fetch(`${API_BASE}/api/calc-settlement`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            live_price: livePrice,
+                            rebate: rebate,
+                            surcharge: result.surcharge || '',
+                            product_type: getProductType(),
+                        }),
+                    });
+                    if (calcResp.ok) {
+                        const calcResult = await calcResp.json();
+                        data['结算价格&利润率（已除平台）'] = calcResult.result;
+                    }
+                } catch (e) {}
+            }
+
+            // 兜底：如果文案中有"结算价：XXX元"，直接提取并反推利润率
+            if (!data['结算价格&利润率（已除平台）'] && livePrice) {
+                const settlementMatch = rawText.match(/结算价[：:]?\s*(\d+(?:\.\d+)?)\s*元/);
+                if (settlementMatch) {
+                    const liveNum = parseFloat(livePrice.replace(/[^0-9.]/g, ''));
+                    const settleNum = parseFloat(settlementMatch[1]);
+                    if (liveNum > 0) {
+                        const platformCost = getProductType() === 'ticket' ? 0.05 : 0.08;
+                        const deepRebate = liveNum - settleNum;
+                        if (deepRebate > 0) {
+                            const profitRate = (deepRebate / liveNum) - platformCost;
+                            data['结算价格&利润率（已除平台）'] = `结算价${Math.round(settleNum)}；利润率${(profitRate * 100).toFixed(1)}%`;
+                        } else {
+                            data['结算价格&利润率（已除平台）'] = `结算价${Math.round(settleNum)}`;
+                        }
+                    } else {
+                        data['结算价格&利润率（已除平台）'] = `结算价${Math.round(settleNum)}`;
+                    }
+                }
+            }
+            rows.push(data);
         }
 
-        // 3. 计算结算价
-        if (result.price && result.rebate) {
-            try {
-                const calcResp = await fetch(`${API_BASE}/api/calc-settlement`, {
+        // 3. 逐行写入（飞书或 Excel）
+        const mode = getTargetMode();
+        let lastRowNum = '?';
+        for (let i = 0; i < rows.length; i++) {
+            let writeResp;
+            if (mode === 'feishu') {
+                writeResp = await fetch(`${API_BASE}/api/write`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        live_price: result.price,
-                        rebate: result.rebate,
-                        surcharge: result.surcharge || '',
-                        product_type: getProductType(),
-                    }),
+                    body: JSON.stringify({ row_data: rows[i], spreadsheet_token: token }),
                 });
-                if (calcResp.ok) {
-                    const calcResult = await calcResp.json();
-                    data['结算价格&利润率（已除平台）'] = calcResult.result;
-                }
-            } catch (e) {}
+            } else {
+                writeResp = await fetch(`${API_BASE}/api/excel/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ row_data: rows[i] }),
+                });
+            }
+            if (!writeResp.ok) {
+                const err = await writeResp.json();
+                throw new Error(err.detail || `第${i+1}行写入失败`);
+            }
+            const writeResult = await writeResp.json();
+            lastRowNum = writeResult.row_number || '?';
         }
 
-        // 4. 直接写入飞书
-        const writeResp = await fetch(`${API_BASE}/api/write`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ row_data: data, spreadsheet_token: token }),
-        });
-        if (!writeResp.ok) {
-            const err = await writeResp.json();
-            throw new Error(err.detail || '写入失败');
+        // Excel 模式：写入后刷新预览
+        if (mode === 'excel') {
+            await refreshExcelPreview();
         }
-        const writeResult = await writeResp.json();
 
-        // 5. 清空输入框，显示成功信息
+        // 4. 清空输入框，显示成功信息
         document.getElementById('rawInput').value = '';
-        const rowNum = writeResult.row_number || '?';
-        showToast(`✅ 已填写入表格第 ${rowNum} 行，请查看`, 'success');
+        const rowMsg = rows.length > 1 ? `共 ${rows.length} 行，末行第 ${lastRowNum} 行` : `第 ${lastRowNum} 行`;
+        const targetLabel = mode === 'excel' ? 'Excel' : '飞书表格';
+        showToast(`✅ 已填写入${targetLabel}${rowMsg}，请查看`, 'success');
     } catch (e) {
         showToast(e.message, 'error');
     } finally {
@@ -695,12 +974,27 @@ async function ocrPoster() {
         return;
     }
 
-    // 检查是否已设置飞书表格
-    const token = getSheetToken();
-    if (!token) {
-        showToast('请先在顶部设置飞书表格链接', 'warning');
-        document.getElementById('sheetTargetInput').focus();
-        return;
+    // 检查目标是否已设置
+    const mode = getTargetMode();
+    if (mode === 'feishu') {
+        const token = getSheetToken();
+        if (!token) {
+            showToast('请先在顶部设置飞书表格链接', 'warning');
+            document.getElementById('sheetTargetInput').focus();
+            return;
+        }
+    } else {
+        // Excel 模式：检查文件是否存在
+        const checkResp = await fetch(`${API_BASE}/api/excel/read`);
+        if (!checkResp.ok) {
+            showToast('Excel 文件未初始化', 'warning');
+            return;
+        }
+        const checkData = await checkResp.json();
+        if (!checkData.headers || checkData.headers.length === 0) {
+            showToast('Excel 文件未初始化', 'warning');
+            return;
+        }
     }
 
     setLoading('btnOcrPoster', true);
@@ -708,6 +1002,7 @@ async function ocrPoster() {
     try {
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('product_type', getProductType());
 
         // 如果有文案内容，一并发送
         const text = document.getElementById('posterTextInput').value.trim();
@@ -728,55 +1023,136 @@ async function ocrPoster() {
         // 构建写入数据
         const productType = getProductType();
         const productTypeLabel = { hotel: '酒店产品', ticket: '门票产品', other: '其他' }[productType] || '酒店产品';
-        const data = {
-            '填写日期': getToday(),
-            '产品类型': productTypeLabel,
-            '酒店/景区': result.hotel_name,
-            '产品信息': result.raw_text,
-            '套票名称': result.taopiao,
-            '套票内容': result.content_items,
-            '加收': result.surcharge || '',
-            '其他加收': result.other_surcharge || '',
-            '售卖时间': result.sell_time || '',
-            '可用日期': result.available_date || '',
-            '对外价格': '',
-            '直播价': result.price || '',
-            '结算价格&利润率（已除平台）': '',
-            '备注': '',
-            '海报': '',
-        };
 
-        // 计算结算价
-        if (result.price) {
-            try {
-                const calcResp = await fetch(`${API_BASE}/api/calc-settlement`, {
+        // 产品信息：海报模式下只填用户提供的文案（如有）+ "海报"
+        const userText = document.getElementById('posterTextInput')?.value?.trim();
+        const posterText = userText ? userText + ' +海报' : '海报';
+
+        // 先获取表格表头
+        let headers = [];
+        try {
+            const hResp = await fetch(`${API_BASE}/api/headers?spreadsheet_token=${encodeURIComponent(token)}`);
+            const hData = await hResp.json();
+            headers = hData.headers || [];
+            console.log('获取到表头:', headers.filter(h => h));
+        } catch (e) {
+            console.warn('获取表头失败，使用默认列名', e);
+        }
+
+        // 根据表头动态构建行数据
+        function buildRow(pkg, isMulti) {
+            const row = {};
+            // 遍历表头，为每个列名填充对应的数据
+            for (const col of headers) {
+                if (!col) continue; // 跳过空列名
+                row[col] = getColValue(col, pkg, result, productTypeLabel, posterText, isMulti);
+            }
+            return row;
+        }
+
+        // 数据源映射：列名 -> 从提取结果中取哪个值
+        function getColValue(col, pkg, result, productTypeLabel, posterText, isMulti) {
+            const today = getToday();
+            const colMap = {
+                '填写日期': today,
+                '产品类型': productTypeLabel,
+                '酒店/景区': result.hotel_name || '',
+                '景区': result.hotel_name || '',
+                '产品信息': posterText,
+                '产品和房态': posterText,
+                '套票名称': isMulti ? (pkg.name || '') : (result.taopiao || ''),
+                '套票': isMulti ? (pkg.name || '') : (result.taopiao || ''),
+                '套票内容': isMulti ? (pkg.content || result.content_items || '') : (result.content_items || ''),
+                '内容': isMulti ? (pkg.content || result.content_items || '') : (result.content_items || ''),
+                '加收': isMulti ? (pkg.surcharge || result.surcharge || '') : (result.surcharge || ''),
+                '其他加收': result.other_surcharge || '',
+                '售卖时间': isMulti ? (pkg.available_date || result.sell_time || '') : (result.sell_time || ''),
+                '可用日期': isMulti ? (pkg.available_date || result.available_date || '') : (result.available_date || ''),
+                '对外价格': isMulti ? (pkg.retail_price || '') : '',
+                '直播价': isMulti ? (pkg.price || '') : (result.price || ''),
+                '结算价格&利润率（已除平台）': isMulti ? (pkg.settlement || '') : '',
+                '结算价格&利润率': isMulti ? (pkg.settlement || '') : '',
+                '备注': isMulti && pkg.order_id ? `下单编号：${pkg.order_id}` : '',
+                '海报': '',
+                '头图': '',
+                '渠道': '',
+                '可上架渠道': '',
+                '抖音商品id': '',
+                '抖音链接': '',
+            };
+            return colMap[col] !== undefined ? colMap[col] : '';
+        }
+
+        // 多套餐时每个套餐写一行
+        const rows = [];
+        if (result.packages && result.packages.length > 0) {
+            for (const pkg of result.packages) {
+                rows.push(buildRow(pkg, true));
+            }
+        } else {
+            // 单行模式
+            const row = buildRow(null, false);
+
+            // 计算结算价（单行模式）
+            if (result.price) {
+                try {
+                    const calcResp = await fetch(`${API_BASE}/api/calc-settlement`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            live_price: result.price,
+                            rebate: result.rebate || '',
+                            surcharge: result.surcharge || '',
+                            product_type: getProductType(),
+                        }),
+                    });
+                    if (calcResp.ok) {
+                        const calcResult = await calcResp.json();
+                        // 找到结算价列名并填入
+                        for (const col of headers) {
+                            if (col.includes('结算') || col.includes('利润率')) {
+                                row[col] = calcResult.result;
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+            rows.push(row);
+        }
+
+        // 调试：打印每行数据
+        console.log('准备写入的行数据:', JSON.stringify(rows, null, 2));
+
+        // 逐行写入（飞书或 Excel）
+        const mode = getTargetMode();
+        let lastRowNum = '?';
+        for (let i = 0; i < rows.length; i++) {
+            let writeResp;
+            if (mode === 'feishu') {
+                writeResp = await fetch(`${API_BASE}/api/write`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        live_price: result.price,
-                        rebate: '',
-                        surcharge: result.surcharge || '',
-                        product_type: getProductType(),
-                    }),
+                    body: JSON.stringify({ row_data: rows[i], spreadsheet_token: token }),
                 });
-                if (calcResp.ok) {
-                    const calcResult = await calcResp.json();
-                    data['结算价格&利润率（已除平台）'] = calcResult.result;
-                }
-            } catch (e) {}
+            } else {
+                writeResp = await fetch(`${API_BASE}/api/excel/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ row_data: rows[i] }),
+                });
+            }
+            if (!writeResp.ok) {
+                const err = await writeResp.json();
+                throw new Error(err.detail || `第${i+1}行写入失败`);
+            }
+            const writeResult = await writeResp.json();
+            lastRowNum = writeResult.row_number || '?';
         }
 
-        // 直接写入飞书
-        const writeResp = await fetch(`${API_BASE}/api/write`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ row_data: data, spreadsheet_token: token }),
-        });
-        if (!writeResp.ok) {
-            const err = await writeResp.json();
-            throw new Error(err.detail || '写入失败');
+        // Excel 模式：写入后刷新预览
+        if (mode === 'excel') {
+            await refreshExcelPreview();
         }
-        const writeResult = await writeResp.json();
 
         // 清空输入，显示成功
         document.getElementById('posterTextInput').value = '';
@@ -784,8 +1160,9 @@ async function ocrPoster() {
         document.getElementById('posterPreview').classList.add('hidden');
         document.getElementById('posterImg').src = '';
         dropZone.classList.remove('has-image');
-        const rowNum = writeResult.row_number || '?';
-        showToast(`✅ 已填写入表格第 ${rowNum} 行，请查看`, 'success');
+        const rowMsg = rows.length > 1 ? `共 ${rows.length} 行，末行第 ${lastRowNum} 行` : `第 ${lastRowNum} 行`;
+        const targetLabel = mode === 'excel' ? 'Excel' : '飞书表格';
+        showToast(`✅ 已填写入${targetLabel}${rowMsg}，请查看`, 'success');
     } catch (e) {
         showToast(e.message, 'error');
     } finally {
@@ -840,11 +1217,22 @@ function getSheetToken() {
     return extractToken(input);
 }
 
+function toFullUrl(token) {
+    if (!token) return '';
+    if (token.startsWith('http')) return token;
+    return `https://bytedance.feishu.cn/sheets/${token}`;
+}
+
 function updateSheetStatus() {
     const token = getSheetToken();
     const status = document.getElementById('sheetStatus');
     if (token) {
         status.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>已设置';
+        const input = document.getElementById('sheetTargetInput');
+        const url = toFullUrl(token);
+        if (input.value.trim() === token || !input.value.includes('feishu.cn')) {
+            input.value = url;
+        }
     } else {
         status.innerHTML = '<i class="bi bi-dash-circle me-1"></i>未设置';
     }
@@ -856,12 +1244,38 @@ function clearSheetTarget() {
     updateSheetStatus();
 }
 
+function openSheetTarget() {
+    const input = document.getElementById('sheetTargetInput').value.trim();
+    let token = extractToken(input);
+    // 如果输入框为空，尝试从 localStorage 读取上次保存的
+    if (!token) {
+        token = localStorage.getItem('sheet_token');
+        if (token) {
+            // 自动填入输入框
+            document.getElementById('sheetTargetInput').value = toFullUrl(token);
+            updateSheetStatus();
+        }
+    }
+    if (token) {
+        const url = toFullUrl(token);
+        window.open(url, '_blank');
+    } else {
+        showToast('请先输入有效的飞书表格链接', 'warning');
+    }
+}
+
 function saveSheetTarget() {
     const input = document.getElementById('sheetTargetInput').value.trim();
     const token = extractToken(input);
-    if (token && document.getElementById('rememberSheetCheck').checked) {
+    if (token) {
         localStorage.setItem('sheet_token', token);
-    } else if (!token) {
+        // 输入框显示完整链接
+        const inputEl = document.getElementById('sheetTargetInput');
+        const url = toFullUrl(token);
+        if (inputEl.value.trim() !== url) {
+            inputEl.value = url;
+        }
+    } else {
         localStorage.removeItem('sheet_token');
     }
     updateSheetStatus();
@@ -870,7 +1284,7 @@ function saveSheetTarget() {
 function loadSheetTarget() {
     const saved = localStorage.getItem('sheet_token');
     if (saved) {
-        document.getElementById('sheetTargetInput').value = saved;
+        document.getElementById('sheetTargetInput').value = toFullUrl(saved);
         document.getElementById('rememberSheetCheck').checked = true;
     }
     updateSheetStatus();
@@ -891,7 +1305,6 @@ async function createNewSheet() {
 
         // 自动填入并记住
         document.getElementById('sheetTargetInput').value = token;
-        document.getElementById('rememberSheetCheck').checked = true;
         localStorage.setItem('sheet_token', token);
         updateSheetStatus();
 
@@ -905,7 +1318,7 @@ async function createNewSheet() {
         showToast(e.message, 'error');
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>新建表格';
+        btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>新建飞书表格';
     }
 }
 
@@ -953,6 +1366,10 @@ async function doWrite(data, btnId, token) {
 
 async function init() {
     loadSheetTarget();
+
+    // 初始化 Excel
+    await initExcel();
+
     try {
         const resp = await fetch(`${API_BASE}/api/check`);
         if (resp.ok) {

@@ -24,8 +24,72 @@ from src.lark_writer import (
     check_lark_cli,
     load_config,
 )
-from src.poster_ocr import ocr_image
+from src.poster_ocr import ocr_image as tesseract_ocr
 from src.ai_helper import ai_extract_surcharge, ai_extract_content, ai_generate_taopiao, ai_extract_all
+
+# 百度 OCR 配置
+BAIDU_OCR_APP_ID = "7814464"
+BAIDU_OCR_API_KEY = "7ijAbuCmT46sGDtNhZKce2rS"
+BAIDU_OCR_SECRET_KEY = "iTH5KN9sWfNJdI7UCtP3t9WrJYTIgRBo"
+
+
+def baidu_ocr(image_path: str) -> str:
+    """
+    使用百度 OCR API 识别图片文字。
+    需要先获取 access_token，然后调用通用文字识别接口。
+
+    Args:
+        image_path: 图片文件路径
+
+    Returns:
+        识别出的文本内容
+    """
+    import requests
+    import base64
+    import io
+    from PIL import Image
+
+    # 1. 获取 access_token
+    token_url = "https://aip.baidubce.com/oauth/2.0/token"
+    params = {
+        "grant_type": "client_credentials",
+        "client_id": BAIDU_OCR_API_KEY,
+        "client_secret": BAIDU_OCR_SECRET_KEY,
+    }
+    resp = requests.get(token_url, params=params, timeout=10)
+    resp.raise_for_status()
+    access_token = resp.json().get("access_token")
+
+    # 2. 读取图片，压缩到百度OCR限制内（base64后不超过4MB）
+    img = Image.open(image_path)
+    # 限制最长边不超过4096px
+    max_dim = 4096
+    w, h = img.size
+    if w > max_dim or h > max_dim:
+        ratio = min(max_dim / w, max_dim / h)
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+    # 压缩质量，控制文件大小
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=85, optimize=True)
+    img_data = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    # 3. 调用通用文字识别（标准版）
+    ocr_url = f"https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token={access_token}"
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    data = {"image": img_data}
+    resp = requests.post(ocr_url, headers=headers, data=data, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+
+    if "words_result" not in result:
+        return ""
+
+    texts = [item["words"] for item in result["words_result"]]
+    return "\n".join(texts)
+
+
+# 默认使用百度 OCR，可切换回 Tesseract
+ocr_image = baidu_ocr
 
 
 def parse_raw_input(text: str) -> dict:
@@ -601,7 +665,7 @@ def calc_settlement(parsed: dict, col_data: dict, product_type: str = "hotel") -
     result = f"结算价{int(settlement)}；利润率{profit_pct:.1f}%"
 
     # 解析加收信息，提取加收金额
-    surcharge_amounts = re.findall(r'加收(\d+(?:\.\d+)?)', surcharge)
+    surcharge_amounts = re.findall(r'(?:加收|[+＋])(\d+(?:\.\d+)?)', surcharge)
     if surcharge_amounts:
         extra_parts = []
         for amount_str in surcharge_amounts:

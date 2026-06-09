@@ -12,26 +12,30 @@ from pathlib import Path
 from typing import Optional
 
 
-# 表格列定义（按顺序，15列 A-O）
-# 实际表头：A=填写日期 B=产品类型 C=酒店/景区 D=产品信息 E=套票名称
-#           F=套票内容 G=加收 H=其他加收 I=售卖时间 J=可用日期
-#           K=对外价格 L=直播价 M=结算价格&利润率（已除平台） N=备注 O=海报
+# 表格列定义（按顺序，18列 A-R）
+# 实际表头：A=填写日期 B=酒店/景区 C=渠道 D=可上架渠道 E=产品和房态
+#           F=套票 G=抖音商品id H=抖音链接 I=内容 J=加收
+#           K=其他加收 L=售卖时间 M=可用日期 N=对外价格 O=直播价
+#           P=结算价格&利润率 Q=备注 R=头图
 COLUMNS = [
     "填写日期",                    # A
-    "产品类型",                    # B
-    "酒店/景区",                   # C
-    "产品信息",                    # D
-    "套票名称",                    # E
-    "套票内容",                    # F
-    "加收",                        # G
-    "其他加收",                    # H
-    "售卖时间",                    # I
-    "可用日期",                    # J
-    "对外价格",                    # K
-    "直播价",                      # L
-    "结算价格&利润率（已除平台）", # M
-    "备注",                        # N
-    "海报",                        # O
+    "酒店/景区",                   # B
+    "渠道",                        # C
+    "可上架渠道",                  # D
+    "产品和房态",                  # E
+    "套票",                        # F
+    "抖音商品id",                  # G
+    "抖音链接",                    # H
+    "内容",                        # I
+    "加收",                        # J
+    "其他加收",                    # K
+    "售卖时间",                    # L
+    "可用日期",                    # M
+    "对外价格",                    # N
+    "直播价",                      # O
+    "结算价格&利润率",            # P
+    "备注",                        # Q
+    "头图",                        # R
 ]
 
 
@@ -100,11 +104,49 @@ def get_sheet_id(spreadsheet_token: str, sheet_title: str = "Sheet1") -> str:
     raise ValueError(f"未找到工作表 '{sheet_title}'")
 
 
+def _get_last_row(spreadsheet_token: str, sheet_id: str) -> int:
+    """
+    获取工作表已有数据的最大行号（含表头）。
+    通过读取 A 列所有非空单元格来确定。
+    """
+    cmd = [
+        "lark-cli", "sheets", "+read",
+        "--spreadsheet-token", spreadsheet_token,
+        "--sheet-id", sheet_id,
+        "--range", f"{sheet_id}!A:A",
+        "--as", "user",
+    ]
+    try:
+        data = _run_lark_cli(cmd)
+        values = data.get("data", {}).get("valueRange", {}).get("values", [])
+        return len(values)  # 行数 = 最后非空行号
+    except Exception:
+        return 0  # 读不到就从头开始
+
+
+def _get_header_row(spreadsheet_token: str, sheet_id: str) -> list:
+    """读取表格第一行（表头），返回列名列表。"""
+    cmd = [
+        "lark-cli", "sheets", "+read",
+        "--spreadsheet-token", spreadsheet_token,
+        "--range", f"{sheet_id}!A1:Z1",
+        "--as", "user",
+    ]
+    result = _run_lark_cli(cmd)
+    values = result.get("data", {}).get("valueRange", {}).get("values", [])
+    if values:
+        return [v or "" for v in values[0]]
+    return []
+
+
 def append_row_by_cols(col_data: dict,
                        spreadsheet_token: Optional[str] = None,
                        sheet_title: Optional[str] = None) -> str:
     """
-    按列名向飞书表格追加一行。
+    按列名向飞书表格追加一行（自动追加到最后一行之后，不会覆盖已有内容）。
+
+    自动读取表格第一行作为表头，按表头顺序映射列数据。
+    未提供的列留空。
 
     Args:
         col_data: 字典，key 为列名，value 为要写入的内容。
@@ -124,22 +166,39 @@ def append_row_by_cols(col_data: dict,
     sheet_title = sheet_title or "Sheet1"
     sheet_id = get_sheet_id(spreadsheet_token, sheet_title)
 
-    # 按 COLUMNS 顺序构建一行数据
+    # 动态读取表头
+    headers = _get_header_row(spreadsheet_token, sheet_id)
+    if not headers:
+        # 兜底：使用静态 COLUMNS
+        headers = COLUMNS
+    else:
+        # 过滤掉空列名，只保留有内容的列
+        headers = [h for h in headers if h]
+
+    # 获取当前最后一行行号
+    last_row = _get_last_row(spreadsheet_token, sheet_id)
+    target_row = last_row + 1  # 从下一行开始写入
+
+    # 按表头顺序构建一行数据
     row = []
-    for col_name in COLUMNS:
+    for col_name in headers:
         row.append(col_data.get(col_name, ""))
 
     values_json = json.dumps([row], ensure_ascii=False)
+    range_str = f"{sheet_id}!A{target_row}"
 
     cmd = [
-        "lark-cli", "sheets", "+append",
+        "lark-cli", "sheets", "+write",
         "--spreadsheet-token", spreadsheet_token,
         "--sheet-id", sheet_id,
+        "--range", range_str,
         "--values", values_json,
         "--as", "user",
     ]
 
     data = _run_lark_cli(cmd)
+    # 在返回结果中注入行号信息
+    data["_row_number"] = target_row
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
