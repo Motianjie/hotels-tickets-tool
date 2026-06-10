@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - hotels/tickets 上品工具</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .login-card {
+            background: white;
+            border-radius: 20px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+        }
+        .login-card .logo {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-card .logo i {
+            font-size: 2.5rem;
+            color: #4f46e5;
+            background: #eef2ff;
+            padding: 1rem;
+            border-radius: 16px;
+        }
+        .login-card .logo h2 {
+            font-weight: 700;
+            color: #1e293b;
+            margin-top: 1rem;
+            font-size: 1.3rem;
+        }
+        .login-card .logo p {
+            color: #94a3b8;
+            font-size: 0.875rem;
+            margin-bottom: 0;
+        }
+        .form-control {
+            border-radius: 12px;
+            padding: 0.75rem 1rem;
+            border-color: #e2e8f0;
+        }
+        .form-control:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79,70,229,0.15);
+        }
+        .btn-primary {
+            background: #4f46e5;
+            border-color: #4f46e5;
+            border-radius: 12px;
+            padding: 0.75rem;
+            font-weight: 600;
+        }
+        .btn-primary:hover {
+            background: #4338ca;
+            border-color: #4338ca;
+        }
+        .divider {
+            display: flex;
+            align-items: center;
+            color: #94a3b8;
+            font-size: 0.8rem;
+            margin: 1.5rem 0;
+        }
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .divider::before { margin-right: 1rem; }
+        .divider::after { margin-left: 1rem; }
+        .toast-container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+        }
+        .toast {
+            border-radius: 12px;
+            border: none;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            min-width: 300px;
+            text-align: center;
+        }
+        .forgot-password {
+            font-size: 0.85rem;
+            color: #4f46e5;
+            text-decoration: none;
+        }
+        .forgot-password:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="toast-container" id="toastContainer"></div>
+
+    <div class="login-card">
+        <div class="logo">
+            <i class="bi bi-building"></i>
+            <h2>上品工具</h2>
+            <p>hotels/tickets 管理平台</p>
+        </div>
+
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="mb-3">
+                <label class="form-label fw-medium" style="font-size:0.875rem;">邮箱</label>
+                <input type="email" class="form-control" id="email" placeholder="请输入邮箱" required>
+            </div>
+            <div class="mb-2">
+                <label class="form-label fw-medium" style="font-size:0.875rem;">密码</label>
+                <input type="password" class="form-control" id="password" placeholder="请输入密码" required>
+            </div>
+            <div class="d-flex justify-content-end align-items-center mb-4">
+                <a href="/forgot-password.html" class="forgot-password">找回密码</a>
+            </div>
+            <button type="submit" class="btn btn-primary w-100" id="loginBtn">
+                <i class="bi bi-box-arrow-in-right me-1"></i>登 录
+            </button>
+        </form>
+
+        <div class="divider">还没有账号？</div>
+
+        <a href="/register.html" class="btn btn-outline-primary w-100" style="border-radius:12px;padding:0.75rem;font-weight:500;">
+            <i class="bi bi-person-plus me-1"></i>注册新账号
+        </a>
+    </div>
+
+    <script>
+    const API_BASE = 'http://localhost:8000';
+
+    function showToast(message, type = 'success') {
+        const container = document.getElementById('toastContainer');
+        const icons = { success: 'bi-check-circle-fill text-success', error: 'bi-x-circle-fill text-danger', info: 'bi-info-circle-fill text-primary' };
+        const toast = document.createElement('div');
+        toast.className = 'toast align-items-center show';
+        toast.role = 'alert';
+        toast.innerHTML = `<div class="d-flex"><div class="toast-body"><i class="bi ${icons[type] || icons.info} me-2"></i>${message}</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+    }
+
+    function setLoading(btn, loading) {
+        if (loading) {
+            btn.dataset.originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>登录中...';
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = btn.dataset.originalHtml || btn.innerHTML;
+        }
+    }
+
+    async function handleLogin(e) {
+        e.preventDefault();
+        const btn = document.getElementById('loginBtn');
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+
+        if (!email) {
+            showToast('请输入邮箱', 'error');
+            return;
+        }
+        if (password.length < 6) {
+            showToast('密码至少6位', 'error');
+            return;
+        }
+
+        setLoading(btn, true);
+        try {
+            const resp = await fetch(`${API_BASE}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                showToast(data.detail || '登录失败', 'error');
+                return;
+            }
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('user', JSON.stringify(data.user));
+            showToast('登录成功！', 'success');
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 800);
+        } catch (e) {
+            showToast('网络错误，请检查服务是否启动', 'error');
+        } finally {
+            setLoading(btn, false);
+        }
+    }
+    </script>
+</body>
+</html>

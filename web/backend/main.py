@@ -17,6 +17,7 @@ from typing import Optional
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # 确保项目根目录在 sys.path 中
@@ -60,6 +61,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 静态文件（二维码图片等）
+backend_dir = Path(__file__).resolve().parent
+static_dir = backend_dir / "static"
+static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+# 注册 auth 和 payment 路由
+from web.backend.auth import router as auth_router
+from web.backend.payment import router as payment_router
+app.include_router(auth_router)
+app.include_router(payment_router)
 
 # ============================================================
 # 数据模型

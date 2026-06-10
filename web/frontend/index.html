@@ -185,6 +185,114 @@
             padding: 1rem;
             border: 1px solid #e2e8f0;
         }
+        /* ===== 弹窗样式 ===== */
+        .modal-content {
+            border: none;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            border-bottom: 1px solid #f1f5f9;
+            padding: 1.25rem 1.5rem;
+        }
+        .modal-body {
+            padding: 1.5rem;
+        }
+        .modal-footer {
+            border-top: 1px solid #f1f5f9;
+            padding: 1rem 1.5rem;
+        }
+        .plan-card {
+            border: 2px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 1.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .plan-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+        .plan-card.selected {
+            border-color: var(--primary);
+            background: var(--primary-light);
+        }
+        .plan-card .price {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .plan-card .price small {
+            font-size: 1rem;
+            font-weight: 400;
+            color: #94a3b8;
+        }
+        .pay-method-card {
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .pay-method-card:hover {
+            border-color: var(--primary);
+        }
+        .pay-method-card.selected {
+            border-color: var(--primary);
+            background: var(--primary-light);
+        }
+        .pay-method-card i {
+            font-size: 2rem;
+        }
+        .qr-container {
+            background: white;
+            border: 2px dashed #e2e8f0;
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+        .qr-container img {
+            max-width: 200px;
+        }
+        /* 功能禁用 */
+        .btn:disabled, .mode-card.disabled, .drop-zone.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: auto;
+        }
+        .mode-card.disabled:hover {
+            transform: none;
+            border-color: transparent;
+        }
+        .plan-locked-overlay {
+            position: relative;
+        }
+        .plan-locked-overlay::after {
+            content: '🔒 开通套餐后可用';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            white-space: nowrap;
+            z-index: 10;
+        }
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+        }
         .parsed-info .label {
             font-size: 0.75rem;
             color: #94a3b8;
@@ -208,9 +316,24 @@
         <span class="navbar-brand">
             <i class="bi bi-building me-2"></i>hotels/tickets 上品工具
         </span>
-        <span class="badge bg-light text-dark badge-status" id="statusBadge">
-            <i class="bi bi-circle-fill text-success me-1" style="font-size:0.5rem"></i>就绪
-        </span>
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-light text-dark badge-status" id="statusBadge">
+                <i class="bi bi-circle-fill text-success me-1" style="font-size:0.5rem"></i>就绪
+            </span>
+            <!-- 用户信息 -->
+            <div id="userInfo" class="d-none align-items-center gap-2">
+                <div class="user-avatar">
+                    <i class="bi bi-person-fill"></i>
+                </div>
+                <span class="text-white" style="font-size:0.85rem;" id="userDisplay"></span>
+                <button class="btn btn-sm btn-outline-light" style="border-radius:8px;font-size:0.8rem;" id="planBtn" onclick="showPlanModal()">
+                    <i class="bi bi-gem me-1"></i>开通套餐
+                </button>
+                <button class="btn btn-sm btn-outline-light" style="border-radius:8px;font-size:0.8rem;" onclick="logout()">
+                    <i class="bi bi-box-arrow-right me-1"></i>退出
+                </button>
+            </div>
+        </div>
     </div>
 </nav>
 
@@ -423,6 +546,91 @@
         </div>
     </div>
 
+    <!-- 手动填写模块已移除 -->
+
+</div>
+
+<!-- ===== 套餐选择弹窗 ===== -->
+<div class="modal fade" id="planModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-gem me-2 text-primary"></i>开通套餐</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-4" style="font-size:0.9rem;">选择一个套餐开通后即可使用全部功能</p>
+                <div class="row g-3 mb-4">
+                    <div class="col-6">
+                        <div class="plan-card" data-plan="pro" onclick="selectPlan('pro')">
+                            <div class="mb-2">
+                                <span class="badge bg-primary">Pro</span>
+                            </div>
+                            <div class="price">¥30 <small>/月</small></div>
+                            <div class="mt-2 text-muted" style="font-size:0.85rem;">基础功能</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="plan-card" data-plan="max" onclick="selectPlan('max')">
+                            <div class="mb-2">
+                                <span class="badge bg-warning text-dark">Max</span>
+                            </div>
+                            <div class="price">¥50 <small>/月</small></div>
+                            <div class="mt-2 text-muted" style="font-size:0.85rem;">全部功能</div>
+                        </div>
+                    </div>
+                </div>
+                <p class="fw-medium mb-2" style="font-size:0.9rem;">选择支付方式</p>
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <div class="pay-method-card selected" data-method="wechat" onclick="selectPayMethod('wechat')">
+                            <i class="bi bi-wechat text-success"></i>
+                            <div style="font-size:0.85rem;font-weight:500;">微信支付</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="pay-method-card" data-method="alipay" onclick="selectPayMethod('alipay')">
+                            <i class="bi bi-alipay text-primary"></i>
+                            <div style="font-size:0.85rem;font-weight:500;">支付宝</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" style="border-radius:10px;">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmPayBtn" onclick="confirmPayment()" style="border-radius:10px;">
+                    <i class="bi bi-credit-card me-1"></i>去支付 ¥30
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== 支付弹窗 ===== -->
+<div class="modal fade" id="paymentModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-qr-code me-2 text-primary"></i>扫码支付</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <div class="qr-container mb-3" id="qrContainer">
+                    <div class="text-muted py-4">
+                        <i class="bi bi-hourglass-split" style="font-size:3rem;"></i>
+                        <p class="mt-2">正在生成二维码...</p>
+                    </div>
+                </div>
+                <p class="text-muted mb-1" style="font-size:0.85rem;" id="payAmountText">请使用微信扫码支付 ¥30</p>
+                <p class="text-muted" style="font-size:0.8rem;">支付完成后点击下方按钮</p>
+                <button class="btn btn-success w-100" onclick="mockPay()" style="border-radius:12px;padding:0.75rem;">
+                    <i class="bi bi-check-circle me-1"></i>模拟支付完成
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 </div>
 
 <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
@@ -449,6 +657,282 @@ const COLUMNS = [
     { key: '备注', label: '备注', type: 'text' },
     { key: '海报', label: '海报', type: 'text' },
 ];
+
+// ============================================================
+// 认证状态
+// ============================================================
+
+let currentUser = null;
+let selectedPlan = 'pro';
+let selectedPayMethod = 'wechat';
+let currentOrderId = null;
+
+function getToken() {
+    return localStorage.getItem('token');
+}
+
+function getUser() {
+    const raw = localStorage.getItem('user');
+    return raw ? JSON.parse(raw) : null;
+}
+
+function isLoggedIn() {
+    return !!getToken();
+}
+
+function hasPlan() {
+    const user = getUser();
+    return user && user.plan && user.plan !== 'none';
+}
+
+function logout() {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    window.location.href = '/login.html';
+}
+
+/** 检查登录状态，未登录跳转登录页 */
+function requireAuth() {
+    if (!isLoggedIn()) {
+        window.location.href = '/login.html';
+        return false;
+    }
+    return true;
+}
+
+/** 刷新用户信息（从后端获取最新数据） */
+async function refreshUser() {
+    const token = getToken();
+    if (!token) return null;
+    try {
+        const resp = await fetch(`${API_BASE}/api/auth/me`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+            if (resp.status === 401) {
+                logout();
+                return null;
+            }
+            return null;
+        }
+        const user = await resp.json();
+        localStorage.setItem('user', JSON.stringify(user));
+        currentUser = user;
+        return user;
+    } catch (e) {
+        return null;
+    }
+}
+
+/** 更新 UI 显示用户状态 */
+function updateUserUI(user) {
+    const userInfo = document.getElementById('userInfo');
+    const userDisplay = document.getElementById('userDisplay');
+    const planBtn = document.getElementById('planBtn');
+
+    if (user) {
+        userInfo.classList.remove('d-none');
+        userDisplay.textContent = `${user.account_no} · ${user.plan !== 'none' ? user.plan.toUpperCase() : '未开通'}`;
+        if (user.plan !== 'none') {
+            planBtn.innerHTML = '<i class="bi bi-gem me-1"></i>我的套餐';
+            planBtn.classList.remove('btn-outline-light');
+            planBtn.classList.add('btn-warning');
+            planBtn.style.color = '#1e293b';
+        } else {
+            planBtn.innerHTML = '<i class="bi bi-gem me-1"></i>开通套餐';
+            planBtn.classList.remove('btn-warning');
+            planBtn.classList.add('btn-outline-light');
+            planBtn.style.color = '';
+        }
+    } else {
+        userInfo.classList.add('d-none');
+    }
+}
+
+/** 根据套餐状态启用/禁用功能 */
+function applyPlanLock() {
+    const hasActivePlan = currentUser && currentUser.plan && currentUser.plan !== 'none';
+    const modeCards = document.querySelectorAll('.mode-card');
+    const dropZone = document.getElementById('dropZone');
+    const parseBtns = document.querySelectorAll('#btnParse, #btnOcrPoster');
+    const writeBtns = document.querySelectorAll('[onclick*="writeToTarget"], [onclick*="writeToFeishu"], [onclick*="writeToExcel"]');
+
+    modeCards.forEach(card => {
+        if (!hasActivePlan) {
+            card.classList.add('disabled');
+            card.style.cursor = 'not-allowed';
+            // 阻止点击事件
+            card.onclick = (e) => {
+                e.stopPropagation();
+                showToast('请先开通套餐后再使用功能', 'warning');
+            };
+        } else {
+            card.classList.remove('disabled');
+            card.style.cursor = '';
+            // 恢复原始点击事件由 switchMode 处理
+            const mode = card.dataset.mode;
+            card.onclick = () => switchMode(mode);
+        }
+    });
+
+    // 禁用/启用按钮
+    parseBtns.forEach(btn => {
+        btn.disabled = !hasActivePlan;
+    });
+    writeBtns.forEach(btn => {
+        btn.disabled = !hasActivePlan;
+    });
+
+    // 禁用/启用拖拽区域
+    if (dropZone) {
+        if (!hasActivePlan) {
+            dropZone.classList.add('disabled');
+            dropZone.onclick = (e) => {
+                e.stopPropagation();
+                showToast('请先开通套餐后再使用功能', 'warning');
+            };
+        } else {
+            dropZone.classList.remove('disabled');
+            dropZone.onclick = () => document.getElementById('posterFile').click();
+        }
+    }
+}
+
+// ============================================================
+// 套餐 & 支付
+// ============================================================
+
+function selectPlan(plan) {
+    selectedPlan = plan;
+    document.querySelectorAll('.plan-card').forEach(el => {
+        el.classList.toggle('selected', el.dataset.plan === plan);
+    });
+    const price = plan === 'pro' ? 30 : 50;
+    document.getElementById('confirmPayBtn').innerHTML = `<i class="bi bi-credit-card me-1"></i>去支付 ¥${price}`;
+}
+
+function selectPayMethod(method) {
+    selectedPayMethod = method;
+    document.querySelectorAll('.pay-method-card').forEach(el => {
+        el.classList.toggle('selected', el.dataset.method === method);
+    });
+}
+
+function showPlanModal() {
+    if (!requireAuth()) return;
+    // 如果已开通套餐，显示当前套餐信息
+    if (currentUser && currentUser.plan !== 'none') {
+        showToast(`当前已开通 ${currentUser.plan.toUpperCase()} 套餐，有效期至 ${currentUser.plan_expires_at || '未知'}`, 'info');
+        return;
+    }
+    // 重置选择
+    selectedPlan = 'pro';
+    selectedPayMethod = 'wechat';
+    document.querySelectorAll('.plan-card').forEach(el => {
+        el.classList.toggle('selected', el.dataset.plan === 'pro');
+    });
+    document.querySelectorAll('.pay-method-card').forEach(el => {
+        el.classList.toggle('selected', el.dataset.method === 'wechat');
+    });
+    document.getElementById('confirmPayBtn').innerHTML = '<i class="bi bi-credit-card me-1"></i>去支付 ¥30';
+
+    const modal = new bootstrap.Modal(document.getElementById('planModal'));
+    modal.show();
+}
+
+async function confirmPayment() {
+    const token = getToken();
+    if (!token) return;
+
+    const btn = document.getElementById('confirmPayBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>创建订单...';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/payment/create-order`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+                plan: selectedPlan,
+                method: selectedPayMethod,
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showToast(data.detail || '创建订单失败', 'error');
+            return;
+        }
+
+        currentOrderId = data.order_id;
+
+        // 关闭套餐弹窗，打开支付弹窗
+        bootstrap.Modal.getInstance(document.getElementById('planModal')).hide();
+
+        // 更新支付弹窗
+        const qrContainer = document.getElementById('qrContainer');
+        const payAmountText = document.getElementById('payAmountText');
+        const methodName = selectedPayMethod === 'wechat' ? '微信' : '支付宝';
+        payAmountText.textContent = `请使用${methodName}扫码支付 ¥${data.amount}`;
+
+        qrContainer.innerHTML = `<img src="${API_BASE}${data.qr_code_url}" alt="支付二维码" class="img-fluid">`;
+
+        setTimeout(() => {
+            const payModal = new bootstrap.Modal(document.getElementById('paymentModal'));
+            payModal.show();
+        }, 300);
+    } catch (e) {
+        showToast('网络错误', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-credit-card me-1"></i>去支付';
+    }
+}
+
+async function mockPay() {
+    if (!currentOrderId) return;
+    const token = getToken();
+    if (!token) return;
+
+    const btn = document.querySelector('#paymentModal .btn-success');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>处理中...';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/payment/mock-pay`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({ order_id: currentOrderId }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showToast(data.detail || '支付失败', 'error');
+            return;
+        }
+
+        showToast(data.message, 'success');
+
+        // 关闭支付弹窗
+        bootstrap.Modal.getInstance(document.getElementById('paymentModal')).hide();
+
+        // 刷新用户信息
+        const user = await refreshUser();
+        if (user) {
+            updateUserUI(user);
+            applyPlanLock();
+        }
+    } catch (e) {
+        showToast('网络错误', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>模拟支付完成';
+    }
+}
 
 // ============================================================
 // 工具函数
@@ -512,6 +996,13 @@ document.querySelectorAll('input[name="targetMode"]').forEach(el => {
         const isFeishu = this.value === 'feishu';
         document.getElementById('feishuTargetPanel').classList.toggle('hidden', !isFeishu);
         document.getElementById('excelTargetPanel').classList.toggle('hidden', isFeishu);
+        // 切换时同步控制 Excel 预览面板显隐
+        const previewPanel = document.getElementById('excelPreviewPanel');
+        if (!isFeishu) {
+            previewPanel.classList.remove('hidden');
+        } else {
+            previewPanel.classList.add('hidden');
+        }
     });
 });
 
@@ -587,8 +1078,11 @@ async function refreshExcelPreview() {
             return;
         }
 
-        // 显示面板
-        panel.classList.remove('hidden');
+        // 仅当选择 Excel 模式时才显示预览面板
+        const isExcel = getTargetMode() === 'excel';
+        if (isExcel) {
+            panel.classList.remove('hidden');
+        }
 
         // 更新行数
         rowCount.textContent = `${data.total_rows} 行`;
@@ -727,8 +1221,9 @@ async function parseRawInput() {
 
     // 检查目标是否已设置
     const mode = getTargetMode();
+    let token = null;
     if (mode === 'feishu') {
-        const token = getSheetToken();
+        token = getSheetToken();
         if (!token) {
             showToast('请先在顶部设置飞书表格链接', 'warning');
             document.getElementById('sheetTargetInput').focus();
@@ -976,8 +1471,9 @@ async function ocrPoster() {
 
     // 检查目标是否已设置
     const mode = getTargetMode();
+    let token = null;
     if (mode === 'feishu') {
-        const token = getSheetToken();
+        token = getSheetToken();
         if (!token) {
             showToast('请先在顶部设置飞书表格链接', 'warning');
             document.getElementById('sheetTargetInput').focus();
@@ -1180,21 +1676,6 @@ async function writePoster() {
 }
 
 // ============================================================
-// 手动输入模式
-// ============================================================
-
-buildForm('manualForm', { '填写日期': getToday() });
-
-async function writeManual() {
-    const data = getFormData('manualForm');
-    if (!data['酒店/景区'] || !data['套票名称'] || !data['套票内容']) {
-        showToast('请填写必填字段（酒店/景区、套票名称、套票内容）', 'warning');
-        return;
-    }
-    await writeToFeishu(data, 'btnWriteManual');
-}
-
-// ============================================================
 // 填写表格模块
 // ============================================================
 
@@ -1365,6 +1846,23 @@ async function doWrite(data, btnId, token) {
 // ============================================================
 
 async function init() {
+    // 检查登录状态（本地 token + 后端验证）
+    if (!requireAuth()) return;
+
+    // 刷新用户信息（同时验证 token 有效性）
+    const user = await refreshUser();
+    if (!user) {
+        // token 无效，清除并跳转登录页
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login.html';
+        return;
+    }
+    if (user) {
+        updateUserUI(user);
+        applyPlanLock();
+    }
+
     loadSheetTarget();
 
     // 初始化 Excel
