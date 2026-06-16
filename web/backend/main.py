@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -66,13 +66,13 @@ app.add_middleware(
 backend_dir = Path(__file__).resolve().parent
 static_dir = backend_dir / "static"
 static_dir.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-# 注册 auth 和 payment 路由
-from web.backend.auth import router as auth_router
-from web.backend.payment import router as payment_router
+# 注册 auth 和 admin 路由
+from web.backend.auth import router as auth_router, get_current_user
+from web.backend.admin import router as admin_router
+from web.backend.database import increment_usage
 app.include_router(auth_router)
-app.include_router(payment_router)
+app.include_router(admin_router)
 
 # ============================================================
 # 数据模型
@@ -262,7 +262,7 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
 
 
 @app.post("/api/parse-input", response_model=ParseInputResponse)
-async def api_parse_input(req: ParseInputRequest):
+async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_current_user)):
     """
     解析完整的原始输入（标题+链接+返佣等），提取秀米内容并生成各字段。
 
@@ -271,6 +271,9 @@ async def api_parse_input(req: ParseInputRequest):
     raw_text = req.raw_text.strip()
     if not raw_text:
         raise HTTPException(status_code=400, detail="输入内容为空")
+
+    # 记录使用次数
+    increment_usage(user["id"])
 
     # 1. 解析原始输入（复用 src/main.py 的 parse_raw_input）
     parsed = parse_raw_input(raw_text)
@@ -1215,6 +1218,13 @@ async def api_excel_download():
         filename=DEFAULT_EXCEL_FILENAME,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+# 静态文件和前端页面（放在所有 API 路由之后，避免覆盖 API 路由）
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - hotels/tickets 上品工具</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-light: #eef2ff;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+        body {
+            background: #f8fafc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            box-shadow: 0 2px 10px rgba(79,70,229,0.3);
+        }
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.3rem;
+            letter-spacing: 0.5px;
+        }
+        .card {
+            border: none;
+            border-radius: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .card-header {
+            background: white;
+            border-bottom: 1px solid #f1f5f9;
+            border-radius: 16px 16px 0 0 !important;
+            padding: 1rem 1.5rem;
+            font-weight: 600;
+        }
+        .btn-primary {
+            background: var(--primary);
+            border-color: var(--primary);
+            border-radius: 10px;
+            padding: 0.6rem 1.5rem;
+            font-weight: 500;
+        }
+        .btn-primary:hover {
+            background: #4338ca;
+            border-color: #4338ca;
+        }
+        .btn-outline-primary {
+            border-color: var(--primary);
+            color: var(--primary);
+            border-radius: 10px;
+        }
+        .btn-outline-primary:hover {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+        .form-control, .form-select {
+            border-radius: 10px;
+            border-color: #e2e8f0;
+            padding: 0.6rem 1rem;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(79,70,229,0.15);
+        }
+        .table {
+            font-size: 0.875rem;
+        }
+        .table th {
+            font-weight: 600;
+            color: #475569;
+            border-top: none;
+            background: #f8fafc;
+            white-space: nowrap;
+        }
+        .table td {
+            vertical-align: middle;
+        }
+        .badge-plan {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+        }
+        .badge-plan-pro { background: #dbeafe; color: #1d4ed8; }
+        .badge-plan-max { background: #fef3c7; color: #d97706; }
+        .badge-plan-none { background: #f1f5f9; color: #94a3b8; }
+        .badge-status-active { background: #dcfce7; color: #16a34a; }
+        .badge-status-disabled { background: #fee2e2; color: #dc2626; }
+        .toast-container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+        }
+        .toast {
+            border-radius: 12px;
+            border: none;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            min-width: 300px;
+            text-align: center;
+        }
+        .modal-content {
+            border: none;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            border-bottom: 1px solid #f1f5f9;
+            padding: 1.25rem 1.5rem;
+        }
+        .modal-body {
+            padding: 1.5rem;
+        }
+        .modal-footer {
+            border-top: 1px solid #f1f5f9;
+            padding: 1rem 1.5rem;
+        }
+        .search-box {
+            max-width: 300px;
+        }
+        .stat-card {
+            border-radius: 12px;
+            padding: 1rem;
+            text-align: center;
+        }
+        .stat-card .number {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        .action-btn {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.8rem;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- 导航栏 -->
+    <nav class="navbar navbar-dark">
+        <div class="container">
+            <span class="navbar-brand">
+                <i class="bi bi-gear me-2"></i>管理后台
+            </span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="text-white" style="font-size:0.85rem;" id="adminUserDisplay"></span>
+                <a href="/" class="btn btn-sm btn-outline-light" style="border-radius:8px;font-size:0.8rem;">
+                    <i class="bi bi-arrow-left me-1"></i>返回首页
+                </a>
+                <button class="btn btn-sm btn-outline-light" style="border-radius:8px;font-size:0.8rem;" onclick="logout()">
+                    <i class="bi bi-box-arrow-right me-1"></i>退出
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <!-- 登录表单（未登录时显示） -->
+        <div id="loginSection" class="row justify-content-center" style="display:none;">
+            <div class="col-md-5">
+                <div class="card p-4" style="border-radius:20px;">
+                    <div class="text-center mb-4">
+                        <i class="bi bi-shield-lock" style="font-size:2.5rem;color:#4f46e5;background:#eef2ff;padding:1rem;border-radius:16px;display:inline-block;"></i>
+                        <h4 class="fw-bold mt-3 mb-1">管理员登录</h4>
+                        <p class="text-muted" style="font-size:0.875rem;">请输入管理员账号密码</p>
+                    </div>
+                    <form onsubmit="handleAdminLogin(event)">
+                        <div class="mb-3">
+                            <label class="form-label fw-medium" style="font-size:0.875rem;">邮箱</label>
+                            <input type="email" class="form-control" id="adminEmail" placeholder="admin@example.com" required>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label fw-medium" style="font-size:0.875rem;">密码</label>
+                            <input type="password" class="form-control" id="adminPassword" placeholder="请输入密码" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100" id="adminLoginBtn">
+                            <i class="bi bi-box-arrow-in-right me-1"></i>登 录
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div id="statsSection" class="row g-3 mb-4">
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="number text-primary" id="totalUsers">0</div>
+                    <div class="text-muted" style="font-size:0.85rem;">总账号数</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="number text-success" id="activeUsers">0</div>
+                    <div class="text-muted" style="font-size:0.85rem;">启用中</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="number text-warning" id="planUsers">0</div>
+                    <div class="text-muted" style="font-size:0.85rem;">有套餐</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="number text-danger" id="disabledUsers">0</div>
+                    <div class="text-muted" style="font-size:0.85rem;">已禁用</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作栏 -->
+        <div id="toolbarSection" class="card mb-4">
+            <div class="card-body d-flex justify-content-between align-items-center py-3">
+                <div class="d-flex align-items-center gap-3">
+                    <button class="btn btn-primary" onclick="showCreateModal()">
+                        <i class="bi bi-person-plus me-1"></i>创建账号
+                    </button>
+                    <button class="btn btn-outline-secondary" onclick="refreshUserList()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>刷新
+                    </button>
+                </div>
+                <div class="search-box">
+                    <input type="text" class="form-control" id="searchInput" placeholder="搜索邮箱..." oninput="filterUsers()">
+                </div>
+            </div>
+        </div>
+
+        <!-- 用户列表 -->
+        <div id="userTableSection" class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-people me-2"></i>账号列表</span>
+                <span class="text-muted" style="font-size:0.85rem;" id="userCount">共 0 个账号</span>
+            </div>
+            <div class="card-body p-0" style="overflow-x:auto;">
+                <table class="table table-hover mb-0" id="userTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>邮箱</th>
+                            <th>套餐</th>
+                            <th>有效期</th>
+                            <th>使用次数</th>
+                            <th>状态</th>
+                            <th>当前密码</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userTableBody">
+                        <tr>
+                            <td colspan="10" class="text-center text-muted py-4">
+                                <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:0.5rem;"></i>
+                                暂无数据
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 创建账号弹窗 -->
+    <div class="modal fade" id="createModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-person-plus me-2 text-primary"></i>创建账号</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createForm" onsubmit="handleCreate(event)">
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">邮箱 <span class="text-danger">*</span></label>
+                            <input type="email" class="form-control" id="createEmail" placeholder="user@example.com" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">套餐</label>
+                            <select class="form-select" id="createPlan">
+                                <option value="none">无套餐</option>
+                                <option value="pro">Pro 套餐</option>
+                                <option value="max">Max 套餐</option>
+                            </select>
+                        </div>
+                        <div class="mb-3" id="planDaysGroup">
+                            <label class="form-label fw-medium">有效期（天）</label>
+                            <input type="number" class="form-control" id="createPlanDays" value="30" min="1" max="365">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">使用次数上限</label>
+                            <input type="number" class="form-control" id="createMaxUsage" value="0" min="0" placeholder="0=不限次数">
+                            <small class="text-muted">0 表示不限次数</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">备注</label>
+                            <input type="text" class="form-control" id="createNote" placeholder="可选备注信息">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100" id="createBtn">
+                            <i class="bi bi-check-circle me-1"></i>创建账号
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 续费弹窗 -->
+    <div class="modal fade" id="renewModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-arrow-up-circle me-2 text-success"></i>修改套餐</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3" id="renewUserInfo" style="font-size:0.9rem;">用户：</p>
+                    <form id="renewForm" onsubmit="handleRenew(event)">
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">套餐</label>
+                            <select class="form-select" id="renewPlan">
+                                <option value="none">无套餐</option>
+                                <option value="pro">Pro 套餐</option>
+                                <option value="max">Max 套餐</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-medium">有效期（天）</label>
+                            <input type="number" class="form-control" id="renewDays" value="30" min="1" max="365">
+                        </div>
+                        <button type="submit" class="btn btn-success w-100" id="renewBtn">
+                            <i class="bi bi-check-circle me-1"></i>确认修改
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重置密码结果弹窗 -->
+    <div class="modal fade" id="passwordResultModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-key me-2 text-warning"></i>密码已重置</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center py-4">
+                    <p class="text-muted mb-3">新密码为：</p>
+                    <div class="bg-light rounded p-3 mb-3" style="font-size:1.5rem;font-weight:700;letter-spacing:2px;font-family:monospace;" id="newPasswordDisplay">********</div>
+                    <p class="text-muted" style="font-size:0.85rem;">请妥善保管，建议用户登录后修改密码</p>
+                </div>
+                <div class="modal-footer justify-content-center">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal" style="border-radius:10px;">我知道了</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const API_BASE = 'http://localhost:8000';
+    let allUsers = [];
+    let renewUserId = null;
+
+    // ============================================================
+    // 独立登录（管理后台不依赖主站 token）
+    // ============================================================
+
+    const ADMIN_TOKEN_KEY = 'admin_token';
+
+    function getToken() {
+        return localStorage.getItem(ADMIN_TOKEN_KEY);
+    }
+
+    function requireAuth() {
+        const token = getToken();
+        if (!token) {
+            showLoginForm();
+            return false;
+        }
+        return true;
+    }
+
+    function showLoginForm() {
+        document.getElementById('userTableSection').style.display = 'none';
+        document.getElementById('statsSection').style.display = 'none';
+        document.getElementById('toolbarSection').style.display = 'none';
+        document.getElementById('loginSection').style.display = 'block';
+        document.getElementById('adminUserDisplay').textContent = '';
+    }
+
+    function showAdminPanel() {
+        document.getElementById('loginSection').style.display = 'none';
+        document.getElementById('statsSection').style.display = 'block';
+        document.getElementById('toolbarSection').style.display = 'block';
+        document.getElementById('userTableSection').style.display = 'block';
+    }
+
+    async function handleAdminLogin(e) {
+        e.preventDefault();
+        const email = document.getElementById('adminEmail').value.trim();
+        const password = document.getElementById('adminPassword').value;
+        const btn = document.getElementById('adminLoginBtn');
+        setLoading(btn, true, '登录中...');
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                showToast(data.detail || '登录失败', 'error');
+                return;
+            }
+            if (!data.user.is_admin) {
+                showToast('该账号不是管理员', 'error');
+                return;
+            }
+            localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+            document.getElementById('adminUserDisplay').textContent = `${data.user.email} · 管理员`;
+            showAdminPanel();
+            showToast('登录成功', 'success');
+            await refreshUserList();
+        } catch (e) {
+            showToast('网络错误', 'error');
+        } finally {
+            setLoading(btn, false);
+        }
+    }
+
+    async function checkAdmin() {
+        const token = getToken();
+        if (!token) {
+            showLoginForm();
+            return;
+        }
+        try {
+            const resp = await fetch(`${API_BASE}/api/auth/me`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (!resp.ok) {
+                localStorage.removeItem(ADMIN_TOKEN_KEY);
+                showLoginForm();
+                return;
+            }
+            const user = await resp.json();
+            if (!user.is_admin) {
+                localStorage.removeItem(ADMIN_TOKEN_KEY);
+                showLoginForm();
+                showToast('需要管理员权限', 'error');
+                return;
+            }
+            document.getElementById('adminUserDisplay').textContent = `${user.email} · 管理员`;
+            showAdminPanel();
+            await refreshUserList();
+        } catch (e) {
+            showToast('网络错误', 'error');
+        }
+    }
+
+    // ============================================================
+    // Toast
+    // ============================================================
+
+    function showToast(message, type = 'success') {
+        const container = document.getElementById('toastContainer');
+        const icons = { success: 'bi-check-circle-fill text-success', error: 'bi-x-circle-fill text-danger', info: 'bi-info-circle-fill text-primary', warning: 'bi-exclamation-circle-fill text-warning' };
+        const toast = document.createElement('div');
+        toast.className = 'toast align-items-center show';
+        toast.role = 'alert';
+        toast.innerHTML = `<div class="d-flex"><div class="toast-body"><i class="bi ${icons[type] || icons.info} me-2"></i>${message}</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+    }
+
+    function setLoading(btn, loading, text) {
+        if (loading) {
+            btn.dataset.originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${text || '处理中...'}`;
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = btn.dataset.originalHtml || btn.innerHTML;
+        }
+    }
+
+    // ============================================================
+    // 用户列表
+    // ============================================================
+
+    async function refreshUserList() {
+        const token = getToken();
+        if (!token) return;
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/admin/users`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (!resp.ok) {
+                showToast('获取用户列表失败', 'error');
+                return;
+            }
+            const data = await resp.json();
+            allUsers = data.users || [];
+            renderUserList(allUsers);
+            updateStats();
+        } catch (e) {
+            showToast('网络错误', 'error');
+        }
+    }
+
+    function renderUserList(users) {
+        const tbody = document.getElementById('userTableBody');
+        if (users.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">
+                <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:0.5rem;"></i>
+                暂无数据
+            </td></tr>`;
+            document.getElementById('userCount').textContent = '共 0 个账号';
+            return;
+        }
+
+        document.getElementById('userCount').textContent = `共 ${users.length} 个账号`;
+
+        tbody.innerHTML = users.map(u => {
+            const planBadge = u.plan === 'pro' ? 'badge-plan-pro' : u.plan === 'max' ? 'badge-plan-max' : 'badge-plan-none';
+            const planName = u.plan === 'pro' ? 'Pro' : u.plan === 'max' ? 'Max' : '无';
+            const statusBadge = u.status === 'active' ? 'badge-status-active' : 'badge-status-disabled';
+            const statusText = u.status === 'active' ? '启用' : '禁用';
+            // 有效期状态：已过期/即将过期/正常
+            let expiresHtml = '';
+            if (u.is_admin) {
+                expiresHtml = `<span style="font-size:0.8rem;color:#4f46e5;font-weight:600;">永久有效</span>`;
+            } else if (u.plan === 'none' || !u.plan_expires_at) {
+                expiresHtml = `<span style="font-size:0.8rem;color:#94a3b8;">-</span>`;
+            } else {
+                const now = new Date();
+                const expireDate = new Date(u.plan_expires_at.replace(' ', 'T'));
+                const daysLeft = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
+                if (daysLeft < 0) {
+                    expiresHtml = `<span style="font-size:0.8rem;color:#ef4444;font-weight:600;">已过期</span><br><span style="font-size:0.7rem;color:#94a3b8;">${u.plan_expires_at}</span>`;
+                } else if (daysLeft <= 7) {
+                    expiresHtml = `<span style="font-size:0.8rem;color:#f59e0b;font-weight:600;">${daysLeft}天后过期</span><br><span style="font-size:0.7rem;color:#94a3b8;">${u.plan_expires_at}</span>`;
+                } else {
+                    expiresHtml = `<span style="font-size:0.8rem;color:#10b981;font-weight:600;">${daysLeft}天</span><br><span style="font-size:0.7rem;color:#94a3b8;">${u.plan_expires_at}</span>`;
+                }
+            }
+            const usageText = u.max_usage > 0 ? `${u.usage_count} / ${u.max_usage}` : `${u.usage_count} / 不限`;
+            const isSelf = u.is_admin ? '<span class="badge bg-primary" style="font-size:0.7rem;">管理员</span>' : '';
+
+            return `<tr>
+                <td>${u.id}</td>
+                <td>${u.email} ${isSelf}</td>
+                <td><span class="badge badge-plan ${planBadge}">${planName}</span></td>
+                <td style="font-size:0.8rem;">${expiresHtml}</td>
+                <td>${usageText}</td>
+                <td><span class="badge badge-status ${statusBadge}">${statusText}</span></td>
+                <td style="font-family:monospace;font-size:0.8rem;">
+                    <span class="password-display" data-password="${u.initial_password || ''}" style="cursor:pointer;" onclick="togglePassword(this)">
+                        ${u.initial_password ? '******' : '-'}
+                    </span>
+                    ${u.initial_password ? '<i class="bi bi-eye ms-1" style="cursor:pointer;font-size:0.75rem;" onclick="togglePassword(this.previousElementSibling)"></i>' : ''}
+                </td>
+                <td style="font-size:0.8rem;">${u.created_at}</td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-success action-btn" onclick="showRenewModal(${u.id})" title="修改套餐">
+                            <i class="bi bi-arrow-up-circle"></i>
+                        </button>
+                        <button class="btn btn-outline-${u.status === 'active' ? 'danger' : 'success'} action-btn" onclick="toggleStatus(${u.id})" title="${u.status === 'active' ? '禁用' : '启用'}">
+                            <i class="bi bi-${u.status === 'active' ? 'pause-circle' : 'play-circle'}"></i>
+                        </button>
+                        <button class="btn btn-outline-warning action-btn" onclick="resetPassword(${u.id})" title="重置密码">
+                            <i class="bi bi-key"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function filterUsers() {
+        const keyword = document.getElementById('searchInput').value.trim().toLowerCase();
+        if (!keyword) {
+            renderUserList(allUsers);
+            return;
+        }
+        const filtered = allUsers.filter(u =>
+            u.email.toLowerCase().includes(keyword) ||
+            u.account_no.includes(keyword)
+        );
+        renderUserList(filtered);
+    }
+
+    function togglePassword(el) {
+        const password = el.dataset.password;
+        if (!password) return;
+        if (el.textContent === '******') {
+            el.textContent = password;
+        } else {
+            el.textContent = '******';
+        }
+    }
+
+    function updateStats() {
+        const total = allUsers.length;
+        const active = allUsers.filter(u => u.status === 'active').length;
+        const plan = allUsers.filter(u => u.plan !== 'none').length;
+        const disabled = allUsers.filter(u => u.status === 'disabled').length;
+        document.getElementById('totalUsers').textContent = total;
+        document.getElementById('activeUsers').textContent = active;
+        document.getElementById('planUsers').textContent = plan;
+        document.getElementById('disabledUsers').textContent = disabled;
+    }
+
+    // ============================================================
+    // 创建账号
+    // ============================================================
+
+    function showCreateModal() {
+        document.getElementById('createForm').reset();
+        document.getElementById('createPlan').value = 'none';
+        document.getElementById('createPlanDays').value = '30';
+        document.getElementById('createMaxUsage').value = '0';
+        // 套餐选择时显示/隐藏有效期
+        togglePlanDays();
+        // 绑定套餐切换事件
+        document.getElementById('createPlan').onchange = togglePlanDays;
+        const modal = new bootstrap.Modal(document.getElementById('createModal'));
+        modal.show();
+    }
+
+    function togglePlanDays() {
+        const plan = document.getElementById('createPlan').value;
+        document.getElementById('planDaysGroup').style.display = plan === 'none' ? 'none' : 'block';
+    }
+
+    async function handleCreate(e) {
+        e.preventDefault();
+        const token = getToken();
+        if (!token) return;
+
+        const email = document.getElementById('createEmail').value.trim();
+        const plan = document.getElementById('createPlan').value;
+        const planDays = parseInt(document.getElementById('createPlanDays').value) || 0;
+        const maxUsage = parseInt(document.getElementById('createMaxUsage').value) || 0;
+        const note = document.getElementById('createNote').value.trim();
+
+        const btn = document.getElementById('createBtn');
+        setLoading(btn, true, '创建中...');
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/admin/create-user`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ email, plan, plan_days: planDays, max_usage: maxUsage, note }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                showToast(data.detail || '创建失败', 'error');
+                return;
+            }
+
+            showToast(`账号创建成功！初始密码：${data.initial_password}`, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('createModal')).hide();
+            await refreshUserList();
+        } catch (e) {
+            showToast('网络错误', 'error');
+        } finally {
+            setLoading(btn, false);
+        }
+    }
+
+    // ============================================================
+    // 修改套餐
+    // ============================================================
+
+    function showRenewModal(userId) {
+        const user = allUsers.find(u => u.id === userId);
+        if (!user) return;
+        renewUserId = userId;
+        document.getElementById('renewUserInfo').textContent = `用户：${user.email}`;
+        document.getElementById('renewPlan').value = user.plan;
+        document.getElementById('renewDays').value = '30';
+        const modal = new bootstrap.Modal(document.getElementById('renewModal'));
+        modal.show();
+    }
+
+    async function handleRenew(e) {
+        e.preventDefault();
+        const token = getToken();
+        if (!token) return;
+
+        const plan = document.getElementById('renewPlan').value;
+        const days = parseInt(document.getElementById('renewDays').value) || 30;
+
+        const btn = document.getElementById('renewBtn');
+        setLoading(btn, true, '处理中...');
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/admin/update-plan`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ user_id: renewUserId, plan, days }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                showToast(data.detail || '修改失败', 'error');
+                return;
+            }
+
+            showToast(data.message, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('renewModal')).hide();
+            await refreshUserList();
+        } catch (e) {
+            showToast('网络错误', 'error');
+        } finally {
+            setLoading(btn, false);
+        }
+    }
+
+    // ============================================================
+    // 启用/禁用
+    // ============================================================
+
+    async function toggleStatus(userId) {
+        const token = getToken();
+        if (!token) return;
+
+        const user = allUsers.find(u => u.id === userId);
+        if (!user) return;
+
+        const action = user.status === 'active' ? '禁用' : '启用';
+        if (!confirm(`确定要${action}账号 ${user.email} 吗？`)) return;
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/admin/toggle-status`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ user_id: userId }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                showToast(data.detail || '操作失败', 'error');
+                return;
+            }
+
+            showToast(data.message, 'success');
+            await refreshUserList();
+        } catch (e) {
+            showToast('网络错误', 'error');
+        }
+    }
+
+    // ============================================================
+    // 重置密码
+    // ============================================================
+
+    async function resetPassword(userId) {
+        const token = getToken();
+        if (!token) return;
+
+        const user = allUsers.find(u => u.id === userId);
+        if (!user) return;
+
+        if (!confirm(`确定要重置 ${user.email} 的密码吗？`)) return;
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/admin/reset-password`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ user_id: userId }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                showToast(data.detail || '重置失败', 'error');
+                return;
+            }
+
+            document.getElementById('newPasswordDisplay').textContent = data.new_password;
+            const modal = new bootstrap.Modal(document.getElementById('passwordResultModal'));
+            modal.show();
+            await refreshUserList();
+        } catch (e) {
+            showToast('网络错误', 'error');
+        }
+    }
+
+    // ============================================================
+    // 退出
+    // ============================================================
+
+    function logout() {
+        localStorage.removeItem(ADMIN_TOKEN_KEY);
+        showLoginForm();
+        showToast('已退出登录', 'info');
+    }
+
+    // ============================================================
+    // 初始化
+    // ============================================================
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        // 默认隐藏管理面板，显示登录表单
+        showLoginForm();
+        // 检查是否已有 admin token
+        const token = getToken();
+        if (token) {
+            await checkAdmin();
+        }
+    });
+    </script>
+</body>
+</html>

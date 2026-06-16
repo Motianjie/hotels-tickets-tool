@@ -326,9 +326,12 @@
                     <i class="bi bi-person-fill"></i>
                 </div>
                 <span class="text-white" style="font-size:0.85rem;" id="userDisplay"></span>
-                <button class="btn btn-sm btn-outline-light" style="border-radius:8px;font-size:0.8rem;" id="planBtn" onclick="showPlanModal()">
-                    <i class="bi bi-gem me-1"></i>开通套餐
-                </button>
+                <span class="badge bg-light text-dark badge-status" id="planBadge" style="font-size:0.8rem;cursor:pointer;" onclick="showPlanInfo()">
+                    <i class="bi bi-gem me-1"></i><span id="planText">无套餐</span>
+                </span>
+                <a href="/admin.html" class="btn btn-sm btn-outline-light" style="border-radius:8px;font-size:0.8rem;display:none;" id="adminBtn">
+                    <i class="bi bi-gear me-1"></i>管理后台
+                </a>
                 <button class="btn btn-sm btn-outline-light" style="border-radius:8px;font-size:0.8rem;" onclick="logout()">
                     <i class="bi bi-box-arrow-right me-1"></i>退出
                 </button>
@@ -550,82 +553,24 @@
 
 </div>
 
-<!-- ===== 套餐选择弹窗 ===== -->
-<div class="modal fade" id="planModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title fw-bold"><i class="bi bi-gem me-2 text-primary"></i>开通套餐</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <p class="text-muted mb-4" style="font-size:0.9rem;">选择一个套餐开通后即可使用全部功能</p>
-                <div class="row g-3 mb-4">
-                    <div class="col-6">
-                        <div class="plan-card" data-plan="pro" onclick="selectPlan('pro')">
-                            <div class="mb-2">
-                                <span class="badge bg-primary">Pro</span>
-                            </div>
-                            <div class="price">¥30 <small>/月</small></div>
-                            <div class="mt-2 text-muted" style="font-size:0.85rem;">基础功能</div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="plan-card" data-plan="max" onclick="selectPlan('max')">
-                            <div class="mb-2">
-                                <span class="badge bg-warning text-dark">Max</span>
-                            </div>
-                            <div class="price">¥50 <small>/月</small></div>
-                            <div class="mt-2 text-muted" style="font-size:0.85rem;">全部功能</div>
-                        </div>
-                    </div>
-                </div>
-                <p class="fw-medium mb-2" style="font-size:0.9rem;">选择支付方式</p>
-                <div class="row g-2 mb-3">
-                    <div class="col-6">
-                        <div class="pay-method-card selected" data-method="wechat" onclick="selectPayMethod('wechat')">
-                            <i class="bi bi-wechat text-success"></i>
-                            <div style="font-size:0.85rem;font-weight:500;">微信支付</div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="pay-method-card" data-method="alipay" onclick="selectPayMethod('alipay')">
-                            <i class="bi bi-alipay text-primary"></i>
-                            <div style="font-size:0.85rem;font-weight:500;">支付宝</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" style="border-radius:10px;">取消</button>
-                <button type="button" class="btn btn-primary" id="confirmPayBtn" onclick="confirmPayment()" style="border-radius:10px;">
-                    <i class="bi bi-credit-card me-1"></i>去支付 ¥30
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ===== 支付弹窗 ===== -->
-<div class="modal fade" id="paymentModal" tabindex="-1">
+<!-- ===== 套餐信息弹窗（仅展示） ===== -->
+<div class="modal fade" id="planInfoModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title fw-bold"><i class="bi bi-qr-code me-2 text-primary"></i>扫码支付</h5>
+                <h5 class="modal-title fw-bold"><i class="bi bi-gem me-2 text-primary"></i>我的套餐</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body text-center">
-                <div class="qr-container mb-3" id="qrContainer">
-                    <div class="text-muted py-4">
-                        <i class="bi bi-hourglass-split" style="font-size:3rem;"></i>
-                        <p class="mt-2">正在生成二维码...</p>
-                    </div>
+            <div class="modal-body text-center py-4">
+                <div style="font-size:3rem;color:#4f46e5;margin-bottom:1rem;">
+                    <i class="bi bi-gem"></i>
                 </div>
-                <p class="text-muted mb-1" style="font-size:0.85rem;" id="payAmountText">请使用微信扫码支付 ¥30</p>
-                <p class="text-muted" style="font-size:0.8rem;">支付完成后点击下方按钮</p>
-                <button class="btn btn-success w-100" onclick="mockPay()" style="border-radius:12px;padding:0.75rem;">
-                    <i class="bi bi-check-circle me-1"></i>模拟支付完成
-                </button>
+                <h4 id="planInfoName" class="fw-bold">无套餐</h4>
+                <p class="text-muted mb-1" id="planInfoExpires">-</p>
+                <p class="text-muted mb-0" id="planInfoUsage" style="font-size:0.85rem;">使用次数：0 / 不限</p>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <p class="text-muted mb-0" style="font-size:0.8rem;">如需续费或升级套餐，请联系管理员</p>
             </div>
         </div>
     </div>
@@ -663,9 +608,7 @@ const COLUMNS = [
 // ============================================================
 
 let currentUser = null;
-let selectedPlan = 'pro';
-let selectedPayMethod = 'wechat';
-let currentOrderId = null;
+// 全局变量
 
 function getToken() {
     return localStorage.getItem('token');
@@ -728,21 +671,29 @@ async function refreshUser() {
 function updateUserUI(user) {
     const userInfo = document.getElementById('userInfo');
     const userDisplay = document.getElementById('userDisplay');
-    const planBtn = document.getElementById('planBtn');
+    const planText = document.getElementById('planText');
 
     if (user) {
         userInfo.classList.remove('d-none');
-        userDisplay.textContent = `${user.account_no} · ${user.plan !== 'none' ? user.plan.toUpperCase() : '未开通'}`;
+        const planNames = {'none': '无套餐', 'pro': 'Pro', 'max': 'Max'};
+        const planName = planNames[user.plan] || '无套餐';
+        userDisplay.textContent = `${user.email} · ${planName}`;
+        planText.textContent = planName;
+
+        // 套餐徽章样式
+        const planBadge = document.getElementById('planBadge');
         if (user.plan !== 'none') {
-            planBtn.innerHTML = '<i class="bi bi-gem me-1"></i>我的套餐';
-            planBtn.classList.remove('btn-outline-light');
-            planBtn.classList.add('btn-warning');
-            planBtn.style.color = '#1e293b';
+            planBadge.className = 'badge bg-warning text-dark badge-status';
         } else {
-            planBtn.innerHTML = '<i class="bi bi-gem me-1"></i>开通套餐';
-            planBtn.classList.remove('btn-warning');
-            planBtn.classList.add('btn-outline-light');
-            planBtn.style.color = '';
+            planBadge.className = 'badge bg-light text-dark badge-status';
+        }
+
+        // 管理员按钮
+        const adminBtn = document.getElementById('adminBtn');
+        if (user.is_admin) {
+            adminBtn.style.display = 'inline-block';
+        } else {
+            adminBtn.style.display = 'none';
         }
     } else {
         userInfo.classList.add('d-none');
@@ -751,7 +702,7 @@ function updateUserUI(user) {
 
 /** 根据套餐状态启用/禁用功能 */
 function applyPlanLock() {
-    const hasActivePlan = currentUser && currentUser.plan && currentUser.plan !== 'none';
+    const hasActivePlan = currentUser && (currentUser.is_admin || (currentUser.plan && currentUser.plan !== 'none'));
     const modeCards = document.querySelectorAll('.mode-card');
     const dropZone = document.getElementById('dropZone');
     const parseBtns = document.querySelectorAll('#btnParse, #btnOcrPoster');
@@ -764,7 +715,7 @@ function applyPlanLock() {
             // 阻止点击事件
             card.onclick = (e) => {
                 e.stopPropagation();
-                showToast('请先开通套餐后再使用功能', 'warning');
+                showToast('请联系管理员开通套餐后再使用功能', 'warning');
             };
         } else {
             card.classList.remove('disabled');
@@ -789,7 +740,7 @@ function applyPlanLock() {
             dropZone.classList.add('disabled');
             dropZone.onclick = (e) => {
                 e.stopPropagation();
-                showToast('请先开通套餐后再使用功能', 'warning');
+                showToast('请联系管理员开通套餐后再使用功能', 'warning');
             };
         } else {
             dropZone.classList.remove('disabled');
@@ -799,139 +750,26 @@ function applyPlanLock() {
 }
 
 // ============================================================
-// 套餐 & 支付
+// 套餐信息展示（仅展示，无支付）
 // ============================================================
 
-function selectPlan(plan) {
-    selectedPlan = plan;
-    document.querySelectorAll('.plan-card').forEach(el => {
-        el.classList.toggle('selected', el.dataset.plan === plan);
-    });
-    const price = plan === 'pro' ? 30 : 50;
-    document.getElementById('confirmPayBtn').innerHTML = `<i class="bi bi-credit-card me-1"></i>去支付 ¥${price}`;
-}
-
-function selectPayMethod(method) {
-    selectedPayMethod = method;
-    document.querySelectorAll('.pay-method-card').forEach(el => {
-        el.classList.toggle('selected', el.dataset.method === method);
-    });
-}
-
-function showPlanModal() {
+function showPlanInfo() {
     if (!requireAuth()) return;
-    // 如果已开通套餐，显示当前套餐信息
-    if (currentUser && currentUser.plan !== 'none') {
-        showToast(`当前已开通 ${currentUser.plan.toUpperCase()} 套餐，有效期至 ${currentUser.plan_expires_at || '未知'}`, 'info');
-        return;
-    }
-    // 重置选择
-    selectedPlan = 'pro';
-    selectedPayMethod = 'wechat';
-    document.querySelectorAll('.plan-card').forEach(el => {
-        el.classList.toggle('selected', el.dataset.plan === 'pro');
-    });
-    document.querySelectorAll('.pay-method-card').forEach(el => {
-        el.classList.toggle('selected', el.dataset.method === 'wechat');
-    });
-    document.getElementById('confirmPayBtn').innerHTML = '<i class="bi bi-credit-card me-1"></i>去支付 ¥30';
+    if (!currentUser) return;
 
-    const modal = new bootstrap.Modal(document.getElementById('planModal'));
+    const planNames = {'none': '无套餐', 'pro': 'Pro 套餐', 'max': 'Max 套餐'};
+    const planName = planNames[currentUser.plan] || '无套餐';
+    const expires = currentUser.plan_expires_at || '-';
+    const usage = currentUser.usage_count || 0;
+    const maxUsage = currentUser.max_usage || 0;
+    const usageText = maxUsage > 0 ? `${usage} / ${maxUsage}` : `${usage} / 不限`;
+
+    document.getElementById('planInfoName').textContent = planName;
+    document.getElementById('planInfoExpires').textContent = expires !== '-' ? `有效期至：${expires}` : '-';
+    document.getElementById('planInfoUsage').textContent = `使用次数：${usageText}`;
+
+    const modal = new bootstrap.Modal(document.getElementById('planInfoModal'));
     modal.show();
-}
-
-async function confirmPayment() {
-    const token = getToken();
-    if (!token) return;
-
-    const btn = document.getElementById('confirmPayBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>创建订单...';
-
-    try {
-        const resp = await fetch(`${API_BASE}/api/payment/create-order`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-                plan: selectedPlan,
-                method: selectedPayMethod,
-            }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-            showToast(data.detail || '创建订单失败', 'error');
-            return;
-        }
-
-        currentOrderId = data.order_id;
-
-        // 关闭套餐弹窗，打开支付弹窗
-        bootstrap.Modal.getInstance(document.getElementById('planModal')).hide();
-
-        // 更新支付弹窗
-        const qrContainer = document.getElementById('qrContainer');
-        const payAmountText = document.getElementById('payAmountText');
-        const methodName = selectedPayMethod === 'wechat' ? '微信' : '支付宝';
-        payAmountText.textContent = `请使用${methodName}扫码支付 ¥${data.amount}`;
-
-        qrContainer.innerHTML = `<img src="${API_BASE}${data.qr_code_url}" alt="支付二维码" class="img-fluid">`;
-
-        setTimeout(() => {
-            const payModal = new bootstrap.Modal(document.getElementById('paymentModal'));
-            payModal.show();
-        }, 300);
-    } catch (e) {
-        showToast('网络错误', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-credit-card me-1"></i>去支付';
-    }
-}
-
-async function mockPay() {
-    if (!currentOrderId) return;
-    const token = getToken();
-    if (!token) return;
-
-    const btn = document.querySelector('#paymentModal .btn-success');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>处理中...';
-
-    try {
-        const resp = await fetch(`${API_BASE}/api/payment/mock-pay`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-            },
-            body: JSON.stringify({ order_id: currentOrderId }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-            showToast(data.detail || '支付失败', 'error');
-            return;
-        }
-
-        showToast(data.message, 'success');
-
-        // 关闭支付弹窗
-        bootstrap.Modal.getInstance(document.getElementById('paymentModal')).hide();
-
-        // 刷新用户信息
-        const user = await refreshUser();
-        if (user) {
-            updateUserUI(user);
-            applyPlanLock();
-        }
-    } catch (e) {
-        showToast('网络错误', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>模拟支付完成';
-    }
 }
 
 // ============================================================
@@ -1249,7 +1087,10 @@ async function parseRawInput() {
         // 1. 解析
         const parseResp = await fetch(`${API_BASE}/api/parse-input`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${getToken()}`,
+            },
             body: JSON.stringify({ raw_text: rawText, product_type: getProductType() }),
         });
         if (!parseResp.ok) {

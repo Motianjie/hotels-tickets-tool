@@ -1,6 +1,7 @@
 """
-用户认证模块：注册、登录、邮箱验证码、JWT。
+用户认证模块：登录、邮箱验证码、JWT。
 使用 163 SMTP 发送邮件验证码。
+账号由管理员创建，用户不可自行注册。
 """
 
 import os
@@ -17,7 +18,6 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from web.backend.database import (
-    create_user,
     get_user_by_email,
     get_user_by_id,
     save_verification_code,
@@ -46,9 +46,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 SMTP_HOST = "smtp.163.com"
 SMTP_PORT = 465
 
-# 从环境变量读取
-SMTP_USER = os.environ.get("SMTP_USER", "")       # 163邮箱地址
-SMTP_PASS = os.environ.get("SMTP_PASS", "")        # 163邮箱授权码（非登录密码）
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
 
 
 def send_email(to_email: str, code: str) -> bool:
@@ -93,24 +92,12 @@ def send_email(to_email: str, code: str) -> bool:
 
 class SendCodeRequest(BaseModel):
     email: str
-    purpose: str = "register"  # register | reset_password
+    purpose: str = "reset_password"  # 仅支持 reset_password
 
 
 class SendCodeResponse(BaseModel):
     success: bool
     message: str
-
-
-class RegisterRequest(BaseModel):
-    email: str
-    code: str
-    password: str
-
-
-class RegisterResponse(BaseModel):
-    success: bool
-    message: str
-    account_no: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -142,6 +129,10 @@ class UserInfoResponse(BaseModel):
     account_no: str
     plan: str
     plan_expires_at: str = ""
+    usage_count: int = 0
+    max_usage: int = 0
+    status: str = "active"
+    is_admin: int = 0
 
 
 # ============================================================
@@ -176,10 +167,10 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     return user
 
 
-def require_plan(user: dict = Depends(get_current_user)) -> dict:
-    """要求用户已开通套餐。"""
-    if user["plan"] == "none":
-        raise HTTPException(status_code=403, detail="请先开通套餐")
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """要求当前用户是管理员。"""
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     return user
 
 
@@ -192,36 +183,23 @@ EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
 @router.post("/send-code", response_model=SendCodeResponse)
 async def api_send_code(req: SendCodeRequest):
-    """发送邮箱验证码。"""
+    """发送邮箱验证码（仅用于找回密码）。"""
     email = req.email.strip().lower()
-    purpose = req.purpose
 
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="请输入正确的邮箱地址")
 
-    if purpose not in ("register", "reset_password"):
-        raise HTTPException(status_code=400, detail="无效的验证码用途")
-
-    # 注册时检查邮箱是否已注册
-    if purpose == "register":
-        existing = get_user_by_email(email)
-        if existing:
-            raise HTTPException(status_code=400, detail="该邮箱已注册")
-
-    # 找回密码时检查邮箱是否已注册
-    if purpose == "reset_password":
-        existing = get_user_by_email(email)
-        if not existing:
-            raise HTTPException(status_code=400, detail="该邮箱未注册")
+    # 检查邮箱是否在数据库中登记
+    existing = get_user_by_email(email)
+    if not existing:
+        raise HTTPException(status_code=400, detail="该邮箱未登记，请联系管理员添加账号")
 
     if not can_send_code(email):
         raise HTTPException(status_code=429, detail="请60秒后再试")
 
-    # 生成6位随机验证码
     code = f"{random.randint(100000, 999999)}"
     save_verification_code(email, code)
 
-    # 发送邮件
     sent = send_email(email, code)
 
     if sent:
@@ -232,42 +210,21 @@ async def api_send_code(req: SendCodeRequest):
     return SendCodeResponse(success=True, message=msg)
 
 
-@router.post("/register", response_model=RegisterResponse)
-async def api_register(req: RegisterRequest):
-    """注册新用户。"""
-    email = req.email.strip().lower()
-    if not EMAIL_RE.match(email):
-        raise HTTPException(status_code=400, detail="请输入正确的邮箱地址")
-
-    if len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="密码至少6位")
-
-    # 校验验证码
-    if not verify_code(email, req.code.strip()):
-        raise HTTPException(status_code=400, detail="验证码错误或已过期")
-
-    # 创建用户
-    try:
-        password_raw = req.password[:72]
-        password_hash = pwd_context.hash(password_raw)
-        user = create_user(email, password_hash)
-        return RegisterResponse(
-            success=True,
-            message="注册成功",
-            account_no=user["account_no"],
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/login", response_model=LoginResponse)
 async def api_login(req: LoginRequest):
     """用户登录。"""
     email = req.email.strip().lower()
+
+    # 检查邮箱是否在数据库中登记
     user = get_user_by_email(email)
     if not user:
-        raise HTTPException(status_code=400, detail="邮箱未注册")
+        raise HTTPException(status_code=400, detail="账号不存在，请联系管理员添加账号")
 
+    # 检查账号状态
+    if user.get("status") == "disabled":
+        raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员")
+
+    # 验证密码
     if not pwd_context.verify(req.password[:72], user["password_hash"]):
         raise HTTPException(status_code=400, detail="密码错误")
 
@@ -282,6 +239,10 @@ async def api_login(req: LoginRequest):
             "account_no": user["account_no"],
             "plan": user["plan"],
             "plan_expires_at": user.get("plan_expires_at") or "",
+            "usage_count": user.get("usage_count", 0),
+            "max_usage": user.get("max_usage", 0),
+            "status": user.get("status", "active"),
+            "is_admin": user.get("is_admin", 0),
         },
     )
 
@@ -295,6 +256,10 @@ async def api_me(user: dict = Depends(get_current_user)):
         account_no=user["account_no"],
         plan=user["plan"],
         plan_expires_at=user.get("plan_expires_at") or "",
+        usage_count=user.get("usage_count", 0),
+        max_usage=user.get("max_usage", 0),
+        status=user.get("status", "active"),
+        is_admin=user.get("is_admin", 0),
     )
 
 
@@ -315,11 +280,11 @@ async def api_reset_password(req: ResetPasswordRequest):
     # 检查用户是否存在
     user = get_user_by_email(email)
     if not user:
-        raise HTTPException(status_code=400, detail="该邮箱未注册")
+        raise HTTPException(status_code=400, detail="该邮箱未登记")
 
     # 更新密码
     password_raw = req.new_password[:72]
     password_hash = pwd_context.hash(password_raw)
-    update_user_password(email, password_hash)
+    update_user_password(email, password_hash, initial_password=password_raw)
 
     return ResetPasswordResponse(success=True, message="密码重置成功")
