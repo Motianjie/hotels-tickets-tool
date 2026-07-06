@@ -62,6 +62,9 @@ def baidu_ocr(image_path: str) -> str:
 
     # 2. 读取图片，压缩到百度OCR限制内（base64后不超过4MB）
     img = Image.open(image_path)
+    # RGBA 模式转 RGB（JPEG 不支持 Alpha 通道）
+    if img.mode == 'RGBA':
+        img = img.convert('RGB')
     # 限制最长边不超过4096px
     max_dim = 4096
     w, h = img.size
@@ -137,10 +140,24 @@ def parse_raw_input(text: str) -> dict:
         result["抢购链接"] = qianggou_match.group(1)
 
     # 提取返佣信息
-    # 支持多种格式：[红包]普返xx，深返xx  /  💰普返：40  深度：75  /  普返xx，深返xx
+    # 支持多种格式：
+    #   [红包]普返xx，深返xx  /  💰普返：40  深度：75  /  普返xx，深返xx
+    #   返佣60  /  返佣：60  /  返佣:60
+    #   深返110  /  深返：110
+    #   串货：xxx，返佣60
     fan_match = re.search(r'(?:\[红包\]|💰|返佣[：:])?\s*普返\s*[：:]?\s*(\d+(?:\.\d+)?)\s*(?:，|,|、|\s+)?\s*(?:深度?|深返)\s*[：:]?\s*(\d+(?:\.\d+)?)', text)
     if fan_match:
         result["返佣"] = f"普返{fan_match.group(1)}，深返{fan_match.group(2)}"
+    else:
+        # 单独"返佣XX"格式（没有普返/深返区分，统一作为深返）
+        single_fan = re.search(r'(?:返佣|返佣[：:])\s*(\d+(?:\.\d+)?)', text)
+        if single_fan:
+            result["返佣"] = f"深返{single_fan.group(1)}"
+        else:
+            # 单独"深返XX"格式
+            deep_only = re.search(r'(?:深返|深返[：:])\s*(\d+(?:\.\d+)?)', text)
+            if deep_only:
+                result["返佣"] = f"深返{deep_only.group(1)}"
 
     # 提取下单编号
     order_match = re.search(r'下单编号[：:]\s*(\d+)', text)
@@ -154,7 +171,7 @@ def parse_raw_input(text: str) -> dict:
         result["售卖时间"] = sell_match.group(1).strip()
 
     # 提取可用日期（从文案中，如"使用日期：即日起--2026年10月31日"）
-    avail_match = re.search(r'(?:使用|可用|有效)[日期时间]*[：:]\s*(.+?)(?:\n|$)', text)
+    avail_match = re.search(r'(?:使用|可用|有效|适用)[日期时间]*[：:]\s*(.+?)(?:\n|$)', text)
     if avail_match:
         result["可用日期"] = avail_match.group(1).strip()
 

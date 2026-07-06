@@ -11,6 +11,8 @@ from typing import Optional
 
 import openpyxl
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
 
 # 标准表头（15列 A-O）
@@ -32,10 +34,100 @@ STANDARD_HEADERS = [
     "海报",                        # O
 ]
 
+# ── 样式常量 ──────────────────────────────────────────
+HEADER_FONT = Font(name="微软雅黑", bold=True, size=11, color="FFFFFF")
+HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+HEADER_ALIGNMENT = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+BODY_FONT = Font(name="微软雅黑", size=10)
+BODY_ALIGNMENT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+THIN_BORDER = Border(
+    left=Side(style="thin", color="D9D9D9"),
+    right=Side(style="thin", color="D9D9D9"),
+    top=Side(style="thin", color="D9D9D9"),
+    bottom=Side(style="thin", color="D9D9D9"),
+)
+
+# 列宽配置（字符数），按列名匹配
+COLUMN_WIDTHS = {
+    "填写日期":                    18,
+    "产品类型":                    10,
+    "酒店/景区":                   30,
+    "产品信息":                    50,
+    "套票名称":                    50,
+    "套票内容":                    50,
+    "加收":                        20,
+    "其他加收":                    20,
+    "售卖时间":                    25,
+    "可用日期":                    25,
+    "对外价格":                    12,
+    "直播价":                      12,
+    "结算价格&利润率（已除平台）":  22,
+    "备注":                        20,
+    "海报":                        10,
+}
+
+# 行高
+HEADER_ROW_HEIGHT = 30
+BODY_ROW_HEIGHT = 30
+
+
+def _apply_header_style(ws) -> None:
+    """给表头行应用样式：蓝底白字、居中、边框、行高。"""
+    ws.row_dimensions[1].height = HEADER_ROW_HEIGHT
+    for col_idx in range(1, len(STANDARD_HEADERS) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGNMENT
+        cell.border = THIN_BORDER
+
+
+def _apply_column_widths(ws) -> None:
+    """按 COLUMN_WIDTHS 配置设置列宽。"""
+    for col_idx, header in enumerate(STANDARD_HEADERS, start=1):
+        width = COLUMN_WIDTHS.get(header, 15)
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = width
+
+
+def _apply_body_style(ws, row_number: int) -> None:
+    """给数据行应用样式：自动换行、垂直居中、边框。"""
+    for col_idx in range(1, len(STANDARD_HEADERS) + 1):
+        cell = ws.cell(row=row_number, column=col_idx)
+        cell.font = BODY_FONT
+        cell.alignment = BODY_ALIGNMENT
+        cell.border = THIN_BORDER
+
+
+def _auto_row_height(ws, row_number: int) -> None:
+    """
+    根据【套票内容】列（F列=6）的文本长度估算行高。
+    策略：取套票内容文本，按每行约 30 字符换行，每行约 15pt 高度。
+    """
+    max_lines = 1
+    # 只取套票内容列（F列，col_idx=6）
+    cell = ws.cell(row=row_number, column=6)
+    text = str(cell.value or "")
+    if text:
+        lines = text.split("\n")
+        for line in lines:
+            col_width = COLUMN_WIDTHS.get("套票内容", 50)
+            char_width = 2  # 中文字符宽度系数
+            effective_chars = len(line) * char_width
+            wraps = max(1, (effective_chars // (col_width * 1.8)) + 1)
+            max_lines = max(max_lines, wraps)
+
+    # 每行文本约 15pt，加上边距
+    height = max_lines * 15 + 6
+    height = max(30, min(height, 200))
+    ws.row_dimensions[row_number].height = height
+
 
 def create_excel(filepath: str) -> str:
     """
-    新建 Excel 文件，写入标准 15 列表头。
+    新建 Excel 文件，写入标准 15 列表头，应用样式。
 
     Args:
         filepath: 保存路径（含 .xlsx 后缀）
@@ -49,6 +141,9 @@ def create_excel(filepath: str) -> str:
     # 写入表头
     for col_idx, header in enumerate(STANDARD_HEADERS, start=1):
         ws.cell(row=1, column=col_idx, value=header)
+    # 应用样式
+    _apply_header_style(ws)
+    _apply_column_widths(ws)
     wb.save(filepath)
     return os.path.abspath(filepath)
 
@@ -108,7 +203,8 @@ def _get_last_row(filepath: str) -> int:
 
 def append_row(filepath: str, col_data: dict) -> int:
     """
-    按列名向 Excel 追加一行（自动追加到最后一行之后）。
+    按列名向 Excel 追加一行（自动追加到最后一行之后），
+    自动应用样式和自适应行高。
 
     Args:
         filepath: Excel 文件路径
@@ -134,13 +230,17 @@ def append_row(filepath: str, col_data: dict) -> int:
         value = col_data.get(col_name, "")
         ws.cell(row=target_row, column=col_idx, value=value)
 
+    # 应用样式和自适应行高
+    _apply_body_style(ws, target_row)
+    _auto_row_height(ws, target_row)
+
     wb.save(filepath)
     return target_row
 
 
 def write_row(filepath: str, col_data: dict, row_number: int) -> None:
     """
-    写入指定行号。
+    写入指定行号，自动应用样式和自适应行高。
 
     Args:
         filepath: Excel 文件路径
@@ -159,5 +259,9 @@ def write_row(filepath: str, col_data: dict, row_number: int) -> None:
     for col_idx, col_name in enumerate(headers, start=1):
         value = col_data.get(col_name, "")
         ws.cell(row=row_number, column=col_idx, value=value)
+
+    # 应用样式和自适应行高
+    _apply_body_style(ws, row_number)
+    _auto_row_height(ws, row_number)
 
     wb.save(filepath)

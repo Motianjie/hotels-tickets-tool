@@ -94,7 +94,7 @@ def get_sheet_id(spreadsheet_token: str, sheet_title: str = "Sheet1") -> str:
     cmd = [
         "lark-cli", "sheets", "+info",
         "--spreadsheet-token", spreadsheet_token,
-        "--as", "user",
+        "--as", "bot",
     ]
     data = _run_lark_cli(cmd)
     sheets = data.get("data", {}).get("sheets", {}).get("sheets", [])
@@ -114,7 +114,7 @@ def _get_last_row(spreadsheet_token: str, sheet_id: str) -> int:
         "--spreadsheet-token", spreadsheet_token,
         "--sheet-id", sheet_id,
         "--range", f"{sheet_id}!A:A",
-        "--as", "user",
+        "--as", "bot",
     ]
     try:
         data = _run_lark_cli(cmd)
@@ -130,7 +130,7 @@ def _get_header_row(spreadsheet_token: str, sheet_id: str) -> list:
         "lark-cli", "sheets", "+read",
         "--spreadsheet-token", spreadsheet_token,
         "--range", f"{sheet_id}!A1:Z1",
-        "--as", "user",
+        "--as", "bot",
     ]
     result = _run_lark_cli(cmd)
     values = result.get("data", {}).get("valueRange", {}).get("values", [])
@@ -193,7 +193,7 @@ def append_row_by_cols(col_data: dict,
         "--sheet-id", sheet_id,
         "--range", range_str,
         "--values", values_json,
-        "--as", "user",
+        "--as", "bot",
     ]
 
     data = _run_lark_cli(cmd)

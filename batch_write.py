@@ -193,7 +193,7 @@ def get_sheet_id(spreadsheet_token: str, sheet_title: str) -> str:
     cmd = [
         "lark-cli", "sheets", "+info",
         "--spreadsheet-token", spreadsheet_token,
-        "--as", "user",
+        "--as", "bot",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
@@ -225,7 +225,7 @@ def write_row_at(col_data: dict, spreadsheet_token: str, sheet_id: str, row_num:
         "--sheet-id", sheet_id,
         "--range", range_str,
         "--values", values_json,
-        "--as", "user",
+        "--as", "bot",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
@@ -351,7 +351,7 @@ def main():
                 "--spreadsheet-token", SPREADSHEET_TOKEN,
                 "--sheet-id", sheet_id,
                 "--range", "A:A",
-                "--as", "user",
+                "--as", "bot",
             ], capture_output=True, text=True, timeout=60)
             data = json.loads(result.stdout)
             values = data.get("data", {}).get("valueRange", {}).get("values", [])

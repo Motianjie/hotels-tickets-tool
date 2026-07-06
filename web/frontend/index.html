@@ -420,7 +420,7 @@
 
     <!-- 模式选择 -->
     <div class="row g-3 mb-4" id="modeSelector">
-        <div class="col-md-4">
+        <div class="col-md-6">
             <div class="card mode-card p-3 active" data-mode="raw" onclick="switchMode('raw')">
                 <div class="d-flex align-items-center gap-3">
                     <div class="mode-icon" style="background:#eef2ff;color:#4f46e5;">
@@ -450,27 +450,20 @@
 
     <!-- 解析模式切换 -->
     <div class="card mb-4" id="parseModeSelector">
-        <div class="card-body py-2">
-            <div class="d-flex align-items-center gap-3 flex-wrap">
-                <span class="fw-medium" style="font-size:0.875rem;color:#475569;">
-                    <i class="bi bi-tag me-1"></i>产品类型：
+        <div class="card-body py-3">
+            <div class="d-flex align-items-center gap-3 flex-wrap" style="min-height:48px;">
+                <span class="fw-medium" style="font-size:1rem;color:#475569;">
+                    <i class="bi bi-tag me-1"></i>产品类型（请选择）：
                 </span>
-                <div class="btn-group btn-group-sm me-4" role="group">
+                <div class="btn-group" role="group">
                     <input type="radio" class="btn-check" name="productType" id="ptHotel" value="hotel" autocomplete="off" checked>
-                    <label class="btn btn-outline-primary" for="ptHotel">
+                    <label class="btn btn-outline-primary" for="ptHotel" style="font-size:0.95rem;padding:0.4rem 1rem;">
                         <i class="bi bi-building me-1"></i>酒店产品
                     </label>
                     <input type="radio" class="btn-check" name="productType" id="ptTicket" value="ticket" autocomplete="off">
-                    <label class="btn btn-outline-success" for="ptTicket">
+                    <label class="btn btn-outline-warning" for="ptTicket" style="color:#92400e;font-size:0.95rem;padding:0.4rem 1rem;">
                         <i class="bi bi-ticket me-1"></i>门票产品
                     </label>
-                </div>
-                <span class="fw-medium" style="font-size:0.875rem;color:#475569;">
-                    <i class="bi bi-gear me-1"></i>解析模式：
-                </span>
-                <div class="btn-group btn-group-sm" role="group">
-                    <input type="radio" class="btn-check" name="parseMode" id="pmAI" value="ai" autocomplete="off" checked>
-                    <label class="btn btn-outline-info" for="pmAI">全AI</label>
                 </div>
             </div>
         </div>
@@ -540,9 +533,9 @@
                     </button>
                 </div>
             </div>
-            <div class="card-body p-0" style="overflow-x:auto;">
-                <table class="table table-bordered table-striped table-sm mb-0" id="excelPreviewTable">
-                    <thead id="excelPreviewHead"></thead>
+            <div class="card-body p-0" style="overflow:auto;max-height:1000px;">
+                <table class="table table-bordered table-striped table-sm mb-0" id="excelPreviewTable" style="position:relative;">
+                    <thead id="excelPreviewHead" style="position:sticky;top:0;z-index:1;background:#fff;"></thead>
                     <tbody id="excelPreviewBody"></tbody>
                 </table>
             </div>
@@ -614,9 +607,19 @@ function getToken() {
     return localStorage.getItem('token');
 }
 
+function authHeaders() {
+    const token = getToken();
+    return token ? { 'Authorization': 'Bearer ' + token } : {};
+}
+
 function getUser() {
     const raw = localStorage.getItem('user');
     return raw ? JSON.parse(raw) : null;
+}
+
+function getSheetTokenKey() {
+    const user = getUser();
+    return 'sheet_token_' + (user ? user.id : 'anonymous');
 }
 
 function isLoggedIn() {
@@ -854,7 +857,7 @@ async function initExcel() {
     // 重试最多3次，等待后端就绪
     for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-            const resp = await fetch(`${API_BASE}/api/excel/init`, { method: 'POST' });
+            const resp = await fetch(`${API_BASE}/api/excel/init`, { method: 'POST', headers: { ...authHeaders() } });
             if (!resp.ok) {
                 const err = await resp.json();
                 throw new Error(err.detail || '初始化 Excel 失败');
@@ -876,7 +879,7 @@ async function initExcel() {
 async function resetExcelFile() {
     if (!confirm('确定要重置表格吗？所有已填写的数据将被清空。')) return;
     try {
-        const resp = await fetch(`${API_BASE}/api/excel/reset`, { method: 'POST' });
+        const resp = await fetch(`${API_BASE}/api/excel/reset`, { method: 'POST', headers: { ...authHeaders() } });
         if (!resp.ok) {
             const err = await resp.json();
             throw new Error(err.detail || '重置 Excel 失败');
@@ -901,7 +904,7 @@ function updateExcelStatus(filename) {
 
 async function refreshExcelPreview() {
     try {
-        const resp = await fetch(`${API_BASE}/api/excel/read`);
+        const resp = await fetch(`${API_BASE}/api/excel/read`, { headers: { ...authHeaders() } });
         if (!resp.ok) return;
         const data = await resp.json();
 
@@ -947,7 +950,7 @@ async function refreshExcelPreview() {
 
 async function downloadExcel() {
     try {
-        const resp = await fetch(`${API_BASE}/api/excel/download`);
+        const resp = await fetch(`${API_BASE}/api/excel/download`, { headers: { ...authHeaders() } });
         if (!resp.ok) throw new Error('文件不存在');
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
@@ -979,7 +982,7 @@ async function writeToExcel(data, btnId) {
     try {
         const resp = await fetch(`${API_BASE}/api/excel/write`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ row_data: data }),
         });
         if (!resp.ok) {
@@ -1069,7 +1072,7 @@ async function parseRawInput() {
         }
     } else {
         // Excel 模式：检查文件是否存在
-        const checkResp = await fetch(`${API_BASE}/api/excel/read`);
+        const checkResp = await fetch(`${API_BASE}/api/excel/read`, { headers: { ...authHeaders() } });
         if (!checkResp.ok) {
             showToast('Excel 文件未初始化', 'warning');
             return;
@@ -1121,7 +1124,7 @@ async function parseRawInput() {
                     '对外价格': pkg.retail_price || '',
                     '直播价': pkg.price || '',
                     '结算价格&利润率（已除平台）': pkg.settlement || '',
-                    '备注': pkg.rebate ? `返佣：${pkg.rebate}` : (pkg.order_id ? `下单编号：${pkg.order_id}` : ''),
+                    '备注': '',
                     '海报': '',
                 };
                 rows.push(row);
@@ -1164,10 +1167,6 @@ async function parseRawInput() {
                 '备注': '',
                 '海报': '',
             };
-
-            if (rebate) {
-                data['备注'] = `返佣：${rebate}`;
-            }
 
             // 计算结算价
             if (livePrice && rebate) {
@@ -1226,7 +1225,7 @@ async function parseRawInput() {
             } else {
                 writeResp = await fetch(`${API_BASE}/api/excel/write`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...authHeaders() },
                     body: JSON.stringify({ row_data: rows[i] }),
                 });
             }
@@ -1322,7 +1321,7 @@ async function ocrPoster() {
         }
     } else {
         // Excel 模式：检查文件是否存在
-        const checkResp = await fetch(`${API_BASE}/api/excel/read`);
+        const checkResp = await fetch(`${API_BASE}/api/excel/read`, { headers: { ...authHeaders() } });
         if (!checkResp.ok) {
             showToast('Excel 文件未初始化', 'warning');
             return;
@@ -1408,8 +1407,7 @@ async function ocrPoster() {
                 '对外价格': isMulti ? (pkg.retail_price || '') : '',
                 '直播价': isMulti ? (pkg.price || '') : (result.price || ''),
                 '结算价格&利润率（已除平台）': isMulti ? (pkg.settlement || '') : '',
-                '结算价格&利润率': isMulti ? (pkg.settlement || '') : '',
-                '备注': isMulti && pkg.order_id ? `下单编号：${pkg.order_id}` : '',
+                '备注': '',
                 '海报': '',
                 '头图': '',
                 '渠道': '',
@@ -1474,7 +1472,7 @@ async function ocrPoster() {
             } else {
                 writeResp = await fetch(`${API_BASE}/api/excel/write`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...authHeaders() },
                     body: JSON.stringify({ row_data: rows[i] }),
                 });
             }
@@ -1562,7 +1560,7 @@ function updateSheetStatus() {
 
 function clearSheetTarget() {
     document.getElementById('sheetTargetInput').value = '';
-    localStorage.removeItem('sheet_token');
+    localStorage.removeItem(getSheetTokenKey());
     updateSheetStatus();
 }
 
@@ -1571,7 +1569,7 @@ function openSheetTarget() {
     let token = extractToken(input);
     // 如果输入框为空，尝试从 localStorage 读取上次保存的
     if (!token) {
-        token = localStorage.getItem('sheet_token');
+        token = localStorage.getItem(getSheetTokenKey());
         if (token) {
             // 自动填入输入框
             document.getElementById('sheetTargetInput').value = toFullUrl(token);
@@ -1590,7 +1588,7 @@ function saveSheetTarget() {
     const input = document.getElementById('sheetTargetInput').value.trim();
     const token = extractToken(input);
     if (token) {
-        localStorage.setItem('sheet_token', token);
+        localStorage.setItem(getSheetTokenKey(), token);
         // 输入框显示完整链接
         const inputEl = document.getElementById('sheetTargetInput');
         const url = toFullUrl(token);
@@ -1598,13 +1596,13 @@ function saveSheetTarget() {
             inputEl.value = url;
         }
     } else {
-        localStorage.removeItem('sheet_token');
+        localStorage.removeItem(getSheetTokenKey());
     }
     updateSheetStatus();
 }
 
 function loadSheetTarget() {
-    const saved = localStorage.getItem('sheet_token');
+    const saved = localStorage.getItem(getSheetTokenKey());
     if (saved) {
         document.getElementById('sheetTargetInput').value = toFullUrl(saved);
         document.getElementById('rememberSheetCheck').checked = true;
@@ -1627,7 +1625,7 @@ async function createNewSheet() {
 
         // 自动填入并记住
         document.getElementById('sheetTargetInput').value = token;
-        localStorage.setItem('sheet_token', token);
+        localStorage.setItem(getSheetTokenKey(), token);
         updateSheetStatus();
 
         // 在新标签页打开

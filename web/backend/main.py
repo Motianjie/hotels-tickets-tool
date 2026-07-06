@@ -187,7 +187,7 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
     """
     packages = []
     order_ids = re.findall(r'编号(\d+)', raw_text)
-    pattern = r'(\d+)返(\d+)'
+    pattern = r'([\d.]+)返(\d+)'
     matches = list(re.finditer(pattern, raw_text))
 
     segments = []
@@ -212,7 +212,7 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
         segments.append(segment)
 
     for i, seg in enumerate(segments):
-        m = re.search(r'(\d+)返(\d+)', seg)
+        m = re.search(r'([\d.]+)返(\d+)', seg)
         if not m:
             continue
         pkg_price = m.group(1)
@@ -227,10 +227,34 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
             pkg_name = f"{hotel_name}{pkg_name}"
         pkg_order_id = order_ids[i] if i < len(order_ids) else ""
 
-        # 生成套餐内容：套餐特定描述 + 通用权益
-        pkg_content = f"{pkg_name}"
-        if common_content:
-            pkg_content += f"\n{common_content}"
+        # 生成套餐内容：门票产品只包含景区/项目信息，不包含价格返佣、适用日期、加收等
+        # 格式：套餐名 + 项目/景区描述
+        # 从文案中提取非价格、非日期、非加收、非【】标题的内容行作为项目描述
+        desc_lines = []
+        for line in raw_text.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # 跳过第一行（套餐列表行）
+            if line == raw_text.strip().split('\n')[0].strip():
+                continue
+            # 跳过包含价格返佣的行（如"单人票39.9返3"）
+            if re.search(r'[\d.]+返\d+', line):
+                continue
+            # 跳过加收说明行
+            if re.match(r'^(端午|周末|节假日)?(不加收|不加价|加收)', line):
+                continue
+            # 跳过适用日期/售卖时间行
+            if re.match(r'^(以上套票)?(适用|使用|有效|售卖|抢购)(日期|时间)', line):
+                continue
+            # 跳过以【】开头的标题/卖点行（如【早鸟票】观光+泉水乐园套票！）
+            if re.match(r'^【', line):
+                continue
+            desc_lines.append(line)
+
+        pkg_content = pkg_name
+        if desc_lines:
+            pkg_content += '，' + '，'.join(desc_lines)
 
         # 加收和可用日期：没有提供就留空
         pkg_surcharge = ""
@@ -316,6 +340,11 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
         price_match = re.search(r'(?:售价|价格|直播价)[：:]\s*(?:RMB|R|\$)?\s*(\d+(?:\.\d+)?)', raw_text)
         if price_match:
             price = price_match.group(1) + "元/套"
+    # 兜底：从标题行提取"XXX一口价="格式的价格
+    if not price:
+        title_price = re.search(r'(\d+(?:\.\d+)?)\s*一口价\s*=', title)
+        if title_price:
+            price = title_price.group(1) + "元/套"
 
     # 兜底：AI 没提取到返佣时，从原文提取"结算返"
     rebate = parsed.get("返佣", "")
@@ -347,13 +376,55 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
             # 取第一行前15个字作为酒店名
             hotel_name = first_line[:15].strip()
 
-    # 4. 原始输入模式：如果文案中没有提供日期/加收信息，清空 AI 编造的内容
-    if not any(kw in raw_text for kw in ['售卖时间', '售卖日期', '抢购日期', '使用时间', '有效期', '使用日期', '适用日期', '即日起', '2026', '2025', '2024']):
-        sell_time = ""
-        available_date = ""
-    if not any(kw in raw_text for kw in ['加收', '加价', '周末', '节假日', '平日']):
-        surcharge = ""
-        other_surcharge = ""
+    # 4. 日期/加收处理：优先用文案中的，文案没有则信任 LLM 从秀米提取的结果
+    # 文案中有日期关键词时，用 parse_raw_input 提取的文案日期覆盖 LLM 结果
+    raw_has_date = any(kw in raw_text for kw in ['售卖时间', '售卖日期', '抢购日期', '使用时间', '有效期', '使用日期', '适用日期', '即日起', '2026', '2025', '2024'])
+    if raw_has_date:
+        raw_sell = parsed.get("售卖时间", "")
+        raw_avail = parsed.get("可用日期", "")
+        if raw_sell:
+            sell_time = raw_sell
+        if raw_avail:
+            available_date = raw_avail
+    # 文案中没有日期关键词 → LLM 从秀米提取的结果保留不动，不清空
+
+    # 售卖时间如果包含"即日起--售完即止"且没有明确的文案来源，改为与可用日期一致
+    if "即日起" in sell_time and "售完即止" in sell_time and available_date:
+        sell_time = available_date
+
+    # 加收同理：文案中有加收关键词时，尝试从文案提取覆盖 LLM 结果
+    # 文案中没有加收关键词 → LLM 从秀米提取的结果保留不动，不清空
+
+    # 门票产品：套票内容从原始文案中提取（景区介绍、游玩项目等，不含价格日期加收）
+    if req.product_type == "ticket" and raw_text:
+        content_from_raw = ""
+        lines = raw_text.strip().split('\n')
+        first_line = lines[0].strip() if lines else ""
+        if len(lines) > 1:
+            rest_lines = []
+            for line in lines[1:]:
+                line = line.strip()
+                if not line:
+                    continue
+                # 跳过包含价格返佣的行
+                if re.search(r'[\d.]+返\d+', line):
+                    continue
+                # 跳过加收说明行
+                if re.match(r'^(端午|周末|节假日)?(不加收|不加价|加收)', line):
+                    continue
+                # 跳过适用日期/售卖时间行
+                if re.match(r'^(以上套票)?(适用|使用|有效|售卖|抢购)(日期|时间)', line):
+                    continue
+                # 跳过以【】开头的标题/卖点行
+                if re.match(r'^【', line):
+                    continue
+                rest_lines.append(line)
+            if rest_lines:
+                content_from_raw = '，'.join(rest_lines)
+        # 如果 AI 提取的内容为空或太短，用文案内容覆盖
+        if not content_items or len(content_items) < 20:
+            if content_from_raw:
+                content_items = content_from_raw
 
     # 5. 对外价格自动计算：直播价/0.5，取整数
     external_price = ""
@@ -939,7 +1010,7 @@ async def api_recalc_settlement(req: RecalcRequest):
             "--spreadsheet-token", token,
             "--sheet-id", sheet_id,
             "--range", range_str,
-            "--as", "user",
+            "--as", "bot",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         data = json.loads(result.stdout)
@@ -1005,7 +1076,7 @@ async def api_recalc_settlement(req: RecalcRequest):
                 "--sheet-id", sheet_id,
                 "--range", cell_range,
                 "--values", values_json,
-                "--as", "user",
+                "--as", "bot",
             ]
             subprocess.run(write_cmd, capture_output=True, text=True)
             updated += 1
@@ -1065,7 +1136,7 @@ async def api_create_sheet():
         "lark-cli", "sheets", "+create",
         "--title", "hotels/tickets上品工具",
         "--headers", headers_json,
-        "--as", "user",
+        "--as", "bot",
     ]
 
     try:
@@ -1103,9 +1174,10 @@ async def api_create_sheet():
 EXCEL_DIR = project_root / "excel_files"
 EXCEL_DIR.mkdir(exist_ok=True)
 
-# 默认 Excel 文件名（固定，不随日期变化，方便持久化）
-DEFAULT_EXCEL_FILENAME = "上品工具.xlsx"
-DEFAULT_EXCEL_PATH = str(EXCEL_DIR / DEFAULT_EXCEL_FILENAME)
+
+def _get_excel_path(user_id: int) -> str:
+    """按用户 ID 返回独立的 Excel 文件路径。"""
+    return str(EXCEL_DIR / f"上品工具_{user_id}.xlsx")
 
 
 class ExcelWriteRequest(BaseModel):
@@ -1119,15 +1191,16 @@ class ExcelWriteResponse(BaseModel):
 
 
 @app.post("/api/excel/init")
-async def api_excel_init():
+async def api_excel_init(user: dict = Depends(get_current_user)):
     """初始化 Excel 文件：如果文件不存在则创建，已存在则跳过。"""
     from src.excel_writer import create_excel
+    excel_path = _get_excel_path(user["id"])
     try:
-        if not os.path.exists(DEFAULT_EXCEL_PATH):
-            create_excel(DEFAULT_EXCEL_PATH)
+        if not os.path.exists(excel_path):
+            create_excel(excel_path)
         return {
             "success": True,
-            "filename": DEFAULT_EXCEL_FILENAME,
+            "filename": "上品工具.xlsx",
             "message": "Excel 文件已就绪",
         }
     except Exception as e:
@@ -1135,14 +1208,15 @@ async def api_excel_init():
 
 
 @app.post("/api/excel/reset")
-async def api_excel_reset():
+async def api_excel_reset(user: dict = Depends(get_current_user)):
     """重置 Excel 文件：强制覆盖，清空所有数据行。"""
     from src.excel_writer import create_excel
+    excel_path = _get_excel_path(user["id"])
     try:
-        create_excel(DEFAULT_EXCEL_PATH)
+        create_excel(excel_path)
         return {
             "success": True,
-            "filename": DEFAULT_EXCEL_FILENAME,
+            "filename": "上品工具.xlsx",
             "message": "Excel 文件已重置",
         }
     except Exception as e:
@@ -1150,9 +1224,10 @@ async def api_excel_reset():
 
 
 @app.post("/api/excel/write", response_model=ExcelWriteResponse)
-async def api_excel_write(req: ExcelWriteRequest):
+async def api_excel_write(req: ExcelWriteRequest, user: dict = Depends(get_current_user)):
     """写入一行到 Excel 文件（追加模式）。"""
-    if not os.path.exists(DEFAULT_EXCEL_PATH):
+    excel_path = _get_excel_path(user["id"])
+    if not os.path.exists(excel_path):
         raise HTTPException(status_code=400, detail="Excel 文件未初始化，请先调用 /api/excel/init")
 
     row_data = dict(req.row_data)
@@ -1163,7 +1238,7 @@ async def api_excel_write(req: ExcelWriteRequest):
 
     try:
         from src.excel_writer import append_row
-        row_number = append_row(DEFAULT_EXCEL_PATH, row_data)
+        row_number = append_row(excel_path, row_data)
         return ExcelWriteResponse(
             success=True,
             message=f"已写入第 {row_number} 行",
@@ -1174,14 +1249,15 @@ async def api_excel_write(req: ExcelWriteRequest):
 
 
 @app.get("/api/excel/read")
-async def api_excel_read():
+async def api_excel_read(user: dict = Depends(get_current_user)):
     """读取 Excel 全部数据，返回表头和行数据。"""
-    if not os.path.exists(DEFAULT_EXCEL_PATH):
+    excel_path = _get_excel_path(user["id"])
+    if not os.path.exists(excel_path):
         return {"headers": [], "rows": [], "total_rows": 0}
 
     try:
         from openpyxl import load_workbook
-        wb = load_workbook(DEFAULT_EXCEL_PATH, read_only=True)
+        wb = load_workbook(excel_path, read_only=True)
         ws = wb.active
 
         # 读取表头
@@ -1208,14 +1284,15 @@ async def api_excel_read():
 
 
 @app.get("/api/excel/download")
-async def api_excel_download():
+async def api_excel_download(user: dict = Depends(get_current_user)):
     """下载 Excel 文件。"""
-    if not os.path.exists(DEFAULT_EXCEL_PATH):
+    excel_path = _get_excel_path(user["id"])
+    if not os.path.exists(excel_path):
         raise HTTPException(status_code=404, detail="文件不存在")
     from fastapi.responses import FileResponse
     return FileResponse(
-        path=DEFAULT_EXCEL_PATH,
-        filename=DEFAULT_EXCEL_FILENAME,
+        path=excel_path,
+        filename="上品工具.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 

@@ -29,7 +29,7 @@ sleep 1
 
 # 163 邮箱配置（用于发送验证码）
 export SMTP_USER="xtongtech@163.com"
-export SMTP_PASS="LC3F9TaWFfBqCxxR"
+export SMTP_PASS="GW2QwgxUS94en6Gw"
 
 # 启动后端
 echo "[3/3] 启动服务..."
