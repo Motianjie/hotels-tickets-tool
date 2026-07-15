@@ -53,10 +53,10 @@ from src.ai_helper import ai_extract_all, ai_extract_surcharge, ai_extract_conte
 
 app = FastAPI(title="hotels/tickets API", version="1.0.0")
 
-# CORS
+# CORS（同源模式下可不配置，保留以兼容外部调用）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1305,5 +1305,5 @@ if frontend_dir.exists():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True,
+    uvicorn.run("main:app", host="0.0.0.0", port=80, reload=True,
                 reload_dirs=[str(project_root / "src"), str(project_root / "web/backend")])

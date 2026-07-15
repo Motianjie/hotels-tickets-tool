@@ -24,3 +24,7 @@ config.yaml
 # Temp
 *.log
 /tmp/
+
+# Runtime
+.backend.pid
+/logs/
