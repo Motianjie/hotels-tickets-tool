@@ -28,7 +28,7 @@ import requests
 # ============================================================
 # 配置
 # ============================================================
-os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
 
