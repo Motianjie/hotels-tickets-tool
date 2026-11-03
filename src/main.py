@@ -158,6 +158,11 @@ def parse_raw_input(text: str) -> dict:
             deep_only = re.search(r'(?:深返|深返[：:])\s*(\d+(?:\.\d+)?)', text)
             if deep_only:
                 result["返佣"] = f"深返{deep_only.group(1)}"
+            else:
+                # 单独"深度：XX"格式（如"💰深度：55"）
+                depth_only = re.search(r'(?:深度|深度[：:])\s*(\d+(?:\.\d+)?)', text)
+                if depth_only:
+                    result["返佣"] = f"深返{depth_only.group(1)}"
 
     # 提取下单编号
     order_match = re.search(r'下单编号[：:]\s*(\d+)', text)
@@ -174,6 +179,24 @@ def parse_raw_input(text: str) -> dict:
     avail_match = re.search(r'(?:使用|可用|有效|适用)[日期时间]*[：:]\s*(.+?)(?:\n|$)', text)
     if avail_match:
         result["可用日期"] = avail_match.group(1).strip()
+
+    # 提取方括号日期格式，如【即日-8.31】或【即日起-8.31】
+    bracket_date = re.search(r'【(即日起?[^】]*?[-\d.月年]+)】', text)
+    if bracket_date:
+        date_str = bracket_date.group(1).strip()
+        # 标准化：将"即日-8.31"转为"即日起-2026年8月31日"
+        normalized = date_str
+        # 处理"即日-8.31" → "即日起-2026年8月31日"
+        m = re.match(r'即日起?\s*[-—]\s*(\d{1,2})\.(\d{1,2})', date_str)
+        if m:
+            month, day = m.group(1), m.group(2)
+            normalized = f"即日起-2026年{month}月{day}日"
+        # 如果还没提取到售卖时间，用方括号日期作为售卖时间
+        if not result.get("售卖时间"):
+            result["售卖时间"] = normalized
+        # 如果还没提取到可用日期，也用方括号日期
+        if not result.get("可用日期"):
+            result["可用日期"] = normalized
 
     # 提取标题行（第一行）
     lines = text.strip().split("\n")
@@ -681,8 +704,11 @@ def calc_settlement(parsed: dict, col_data: dict, product_type: str = "hotel") -
     profit_pct = profit_rate * 100
     result = f"结算价{int(settlement)}；利润率{profit_pct:.1f}%"
 
-    # 解析加收信息，提取加收金额
-    surcharge_amounts = re.findall(r'(?:加收|[+＋])(\d+(?:\.\d+)?)', surcharge)
+    # 解析加收信息，提取加收金额（支持"加收：100元"、"加收100"、"周六+100"等格式）
+    # 用 [ \t]* 而非 \s*，避免跨行把"不加收"下一行的"8月"当成加收金额
+    surcharge_amounts = re.findall(r'加收[ \t]*[：:]?[ \t]*(\d+(?:\.\d+)?)', surcharge)
+    if not surcharge_amounts:
+        surcharge_amounts = re.findall(r'[+＋](\d+(?:\.\d+)?)', surcharge)
     if surcharge_amounts:
         extra_parts = []
         for amount_str in surcharge_amounts:

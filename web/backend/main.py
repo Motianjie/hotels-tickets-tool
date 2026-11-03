@@ -378,7 +378,7 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
 
     # 4. 日期/加收处理：优先用文案中的，文案没有则信任 LLM 从秀米提取的结果
     # 文案中有日期关键词时，用 parse_raw_input 提取的文案日期覆盖 LLM 结果
-    raw_has_date = any(kw in raw_text for kw in ['售卖时间', '售卖日期', '抢购日期', '使用时间', '有效期', '使用日期', '适用日期', '即日起', '2026', '2025', '2024'])
+    raw_has_date = any(kw in raw_text for kw in ['售卖时间', '售卖日期', '抢购日期', '使用时间', '有效期', '使用日期', '适用日期', '即日起', '即日', '2026', '2025', '2024'])
     if raw_has_date:
         raw_sell = parsed.get("售卖时间", "")
         raw_avail = parsed.get("可用日期", "")
@@ -426,13 +426,14 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
             if content_from_raw:
                 content_items = content_from_raw
 
-    # 5. 对外价格自动计算：直播价/0.5，取整数
+    # 5. 对外价格自动计算：酒店产品直播价/0.9，门票产品直播价/0.7，取整数
     external_price = ""
     if price:
         try:
             price_num = float(re.sub(r'[^0-9.]', '', price))
             if price_num > 0:
-                external_price = str(int(price_num / 0.5))
+                divisor = 0.7 if req.product_type == "ticket" else 0.9
+                external_price = str(int(price_num / divisor))
         except ValueError:
             pass
 
@@ -695,8 +696,8 @@ async def api_ocr_with_text(
             pkg_retail_price = ""
             pkg_settlement = ""
             if text and text.strip():
-                # 先尝试匹配"深返XX"、"返佣XX"、"反佣XX"格式（所有套餐共用同一个返佣）
-                common_rebate_match = re.search(r'(?:深返|返佣|反佣)(\d+)', text)
+                # 先尝试匹配"深返XX"、"返佣XX"、"反佣XX"格式（所有套餐共用同一个返佣，支持带冒号/空格写法）
+                common_rebate_match = re.search(r'(?:深返|返佣|反佣)[：:]?\s*(\d+(?:\.\d+)?)', text)
                 common_rebate = common_rebate_match.group(1) if common_rebate_match else ""
 
                 # 再匹配"价格返返佣"格式（每个套餐独立返佣）
@@ -735,14 +736,17 @@ async def api_ocr_with_text(
                             retail_price = int(live_num / 0.7)
                             platform_cost = 0.05
                         else:
-                            retail_price = int(live_num / 0.5)
+                            retail_price = int(live_num / 0.9)
                             platform_cost = 0.08
                         settlement = live_num - deep_rebate
                         profit_rate = (deep_rebate / live_num) - platform_cost
                         pkg_settlement = f"结算价{int(settlement)}；利润率{profit_rate*100:.1f}%"
 
                         # 解析加收信息，提取加收金额，计算加收后的结算
-                        surcharge_amounts = re.findall(r'(?:加收|[+＋])(\d+(?:\.\d+)?)', pkg_surcharge)
+                        # 用 [ \t]* 而非 \s*，避免跨行把"不加收"下一行的"8月"当成加收金额
+                        surcharge_amounts = re.findall(r'加收[ \t]*[：:]?[ \t]*(\d+(?:\.\d+)?)', pkg_surcharge)
+                        if not surcharge_amounts:
+                            surcharge_amounts = re.findall(r'[+＋](\d+(?:\.\d+)?)', pkg_surcharge)
                         if surcharge_amounts:
                             extra_parts = []
                             for amount_str in surcharge_amounts:
@@ -852,8 +856,8 @@ async def api_ocr_with_text(
     # 从文案中提取佣金信息
     rebate_value = ""
     if text and text.strip():
-        # 匹配"深返XX"、"返佣XX"、"反佣XX"等格式
-        rebate_match = re.search(r'(?:深返|返佣|反佣)(\d+)', text)
+        # 匹配"深返XX"、"返佣XX"、"反佣XX"等格式（支持"返佣：83"、"返佣 83"等带冒号/空格写法）
+        rebate_match = re.search(r'(?:深返|返佣|反佣)[：:]?\s*(\d+(?:\.\d+)?)', text)
         if rebate_match:
             rebate_value = f"深返{rebate_match.group(1)}"
         else:

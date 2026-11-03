@@ -139,7 +139,10 @@ def calc_settlement(live_price: str, rebate: str, surcharge: str = "") -> str:
     profit_rate = (deep_rebate / live_num) - 0.08
     profit_pct = profit_rate * 100
     result = f"结算价{int(settlement)}；利润率{profit_pct:.1f}%"
-    surcharge_amounts = re.findall(r'(?:加收|[+])(\d+(?:\.\d+)?)', surcharge)
+    # 用 [ \t]* 而非 \s*，避免跨行把"不加收"下一行的"8月"当成加收金额
+    surcharge_amounts = re.findall(r'加收[ \t]*[：:]?[ \t]*(\d+(?:\.\d+)?)', surcharge)
+    if not surcharge_amounts:
+        surcharge_amounts = re.findall(r'[+＋](\d+(?:\.\d+)?)', surcharge)
     if surcharge_amounts:
         extra_parts = []
         for amount_str in surcharge_amounts:

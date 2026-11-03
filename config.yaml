@@ -1,6 +1,6 @@
 # 飞书表格配置
 lark:
   # 飞书电子表格 token（从 URL 中获取：https://xxx.feishu.cn/sheets/:token）
-  spreadsheet_token: "N6ipsPUPhhjYout9l12cyxT0nIb"
+  spreadsheet_token: "TD7bsMndPhqNn8tbzEac4YnTnoh"
   # 工作表名称（默认为 Sheet1）
   sheet_name: "Sheet1"

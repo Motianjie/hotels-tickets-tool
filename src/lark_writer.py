@@ -193,7 +193,7 @@ def append_row_by_cols(col_data: dict,
         "--sheet-id", sheet_id,
         "--range", range_str,
         "--values", values_json,
-        "--as", "bot",
+        "--as", "user",
     ]
 
     data = _run_lark_cli(cmd)

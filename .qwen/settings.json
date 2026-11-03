@@ -20,7 +20,12 @@
       "Bash(ls *)",
       "Bash(find *)",
       "Bash(python3 *)",
-      "Read(//Users/xiutongkoon/**)"
+      "Read(//Users/xiutongkoon/**)",
+      "Skill(xiumius-hotels)",
+      "Bash(lsof *)",
+      "Bash(python *)",
+      "Bash(xargs *)",
+      "Bash(sleep *)"
     ]
   },
   "$version": 4
