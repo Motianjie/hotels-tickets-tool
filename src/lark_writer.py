@@ -1,41 +1,40 @@
 """
 飞书表格写入模块。
 
-通过 lark-cli 命令行工具操作飞书在线表格。
+通过飞书开放平台 HTTP API 操作飞书在线表格。
 支持按列名写入结构化数据。
+
+历史说明：早期版本通过 lark-cli 命令行工具写入，依赖服务器上的单人登录态，
+无法支持多人并发使用，已改为企业自建应用 + tenant_access_token 的 API 方式。
 """
 
 import json
-import subprocess
 import yaml
 from pathlib import Path
 from typing import Optional
 
+from src import lark_client
 
-# 表格列定义（按顺序，18列 A-R）
-# 实际表头：A=填写日期 B=酒店/景区 C=渠道 D=可上架渠道 E=产品和房态
-#           F=套票 G=抖音商品id H=抖音链接 I=内容 J=加收
-#           K=其他加收 L=售卖时间 M=可用日期 N=对外价格 O=直播价
-#           P=结算价格&利润率 Q=备注 R=头图
+
+# 表格列定义（兜底用）。
+# 线上表格的实际表头以读取结果为准；此常量仅在读取表头失败时作为兜底。
+# 顺序与线上真实表格（15 列 A-O）保持一致。
 COLUMNS = [
     "填写日期",                    # A
-    "酒店/景区",                   # B
-    "渠道",                        # C
-    "可上架渠道",                  # D
-    "产品和房态",                  # E
-    "套票",                        # F
-    "抖音商品id",                  # G
-    "抖音链接",                    # H
-    "内容",                        # I
-    "加收",                        # J
-    "其他加收",                    # K
-    "售卖时间",                    # L
-    "可用日期",                    # M
-    "对外价格",                    # N
-    "直播价",                      # O
-    "结算价格&利润率",            # P
-    "备注",                        # Q
-    "头图",                        # R
+    "产品类型",                    # B
+    "酒店/景区",                   # C
+    "产品信息",                    # D
+    "套票名称",                    # E
+    "套票内容",                    # F
+    "加收",                        # G
+    "其他加收",                    # H
+    "售卖时间",                    # I
+    "可用日期",                    # J
+    "对外价格",                    # K
+    "直播价",                      # L
+    "结算价格&利润率",            # M
+    "供应商信息",                  # N
+    "海报",                        # O
 ]
 
 
@@ -67,75 +66,16 @@ def get_sheet_name(config: Optional[dict] = None) -> str:
     return config.get("lark", {}).get("sheet_name", "Sheet1")
 
 
-def _run_lark_cli(cmd: list, timeout: int = 60) -> dict:
-    """执行 lark-cli 命令并返回解析后的 JSON。"""
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
-        )
-    except FileNotFoundError:
-        raise FileNotFoundError("未找到 lark-cli 命令，请先安装飞书 CLI 工具")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("lark-cli 命令执行超时")
-
-    if result.returncode != 0:
-        error_msg = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(f"lark-cli 执行失败: {error_msg}")
-
-    return json.loads(result.stdout)
-
-
 def get_sheet_id(spreadsheet_token: str, sheet_title: str = "Sheet1") -> str:
-    """
-    获取工作表的 ID。
-
-    通过 lark-cli sheets +info 获取表格信息，根据 sheet 标题查找对应的 sheet_id。
-    """
-    cmd = [
-        "lark-cli", "sheets", "+info",
-        "--spreadsheet-token", spreadsheet_token,
-        "--as", "bot",
-    ]
-    data = _run_lark_cli(cmd)
-    sheets = data.get("data", {}).get("sheets", {}).get("sheets", [])
-    for sheet in sheets:
-        if sheet.get("title") == sheet_title:
-            return sheet["sheet_id"]
-    raise ValueError(f"未找到工作表 '{sheet_title}'")
-
-
-def _get_last_row(spreadsheet_token: str, sheet_id: str) -> int:
-    """
-    获取工作表已有数据的最大行号（含表头）。
-    通过读取 A 列所有非空单元格来确定。
-    """
-    cmd = [
-        "lark-cli", "sheets", "+read",
-        "--spreadsheet-token", spreadsheet_token,
-        "--sheet-id", sheet_id,
-        "--range", f"{sheet_id}!A:A",
-        "--as", "bot",
-    ]
-    try:
-        data = _run_lark_cli(cmd)
-        values = data.get("data", {}).get("valueRange", {}).get("values", [])
-        return len(values)  # 行数 = 最后非空行号
-    except Exception:
-        return 0  # 读不到就从头开始
+    """按工作表标题获取 sheet_id。"""
+    return lark_client.find_sheet_id(spreadsheet_token, sheet_title)
 
 
 def _get_header_row(spreadsheet_token: str, sheet_id: str) -> list:
     """读取表格第一行（表头），返回列名列表。"""
-    cmd = [
-        "lark-cli", "sheets", "+read",
-        "--spreadsheet-token", spreadsheet_token,
-        "--range", f"{sheet_id}!A1:Z1",
-        "--as", "bot",
-    ]
-    result = _run_lark_cli(cmd)
-    values = result.get("data", {}).get("valueRange", {}).get("values", [])
+    values = lark_client.read_values(spreadsheet_token, sheet_id, "A1:Z1")
     if values:
-        return [v or "" for v in values[0]]
+        return [v if v is not None else "" for v in values[0]]
     return []
 
 
@@ -156,7 +96,7 @@ def append_row_by_cols(col_data: dict,
         sheet_title: 工作表标题，不传则从配置读取。
 
     Returns:
-        lark-cli 命令的输出。
+        JSON 字符串，包含写入结果与 _row_number（写入的起始行号）。
     """
     if spreadsheet_token is None:
         config = load_config()
@@ -169,46 +109,27 @@ def append_row_by_cols(col_data: dict,
     # 动态读取表头
     headers = _get_header_row(spreadsheet_token, sheet_id)
     if not headers:
-        # 兜底：使用静态 COLUMNS
-        headers = COLUMNS
+        headers = COLUMNS          # 兜底：静态常量
     else:
-        # 过滤掉空列名，只保留有内容的列
-        headers = [h for h in headers if h]
-
-    # 获取当前最后一行行号
-    last_row = _get_last_row(spreadsheet_token, sheet_id)
-    target_row = last_row + 1  # 从下一行开始写入
+        headers = [h for h in headers if h]   # 过滤空列名
 
     # 按表头顺序构建一行数据
-    row = []
-    for col_name in headers:
-        row.append(col_data.get(col_name, ""))
+    row = [col_data.get(col_name, "") for col_name in headers]
 
-    values_json = json.dumps([row], ensure_ascii=False)
-    range_str = f"{sheet_id}!A{target_row}"
-
-    cmd = [
-        "lark-cli", "sheets", "+write",
-        "--spreadsheet-token", spreadsheet_token,
-        "--sheet-id", sheet_id,
-        "--range", range_str,
-        "--values", values_json,
-        "--as", "user",
-    ]
-
-    data = _run_lark_cli(cmd)
-    # 在返回结果中注入行号信息
-    data["_row_number"] = target_row
-    return json.dumps(data, ensure_ascii=False, indent=2)
+    result = lark_client.append_rows(spreadsheet_token, sheet_id, [row])
+    result["_row_number"] = result.get("row_number", 0)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 def check_lark_cli() -> bool:
-    """检查 lark-cli 是否可用。"""
-    try:
-        result = subprocess.run(
-            ["which", "lark-cli"],
-            capture_output=True, text=True, timeout=10,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """
+    检查飞书写入通道是否可用（保留原名以兼容既有调用）。
+
+    现已改为校验 API 凭证，不再检测 lark-cli 命令。
+    """
+    return lark_client.check_api().get("available", False)
+
+
+def check_lark_api() -> dict:
+    """检查飞书 API 可用性，返回详细状态。"""
+    return lark_client.check_api()

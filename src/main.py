@@ -5,7 +5,7 @@
 用法:
     python src/main.py                    # 粘贴原始输入，自动提取秀米内容并写入飞书
     python src/main.py extract <url>      # 仅提取秀米内容，不写入飞书
-    python src/main.py check              # 检查 lark-cli 是否可用
+    python src/main.py check              # 检查飞书 API 可用性 是否可用
 """
 
 import re
@@ -22,6 +22,7 @@ from src.extractor import XiumiusExtractor
 from src.lark_writer import (
     append_row_by_cols,
     check_lark_cli,
+    check_lark_api,
     load_config,
 )
 from src.poster_ocr import ocr_image as tesseract_ocr
@@ -822,9 +823,9 @@ def cmd_interactive() -> None:
         print("\n⚠️  未找到秀米链接，无法自动提取套餐内容")
         content = ""
 
-    # 检查 lark-cli
+    # 检查飞书 API 可用性
     if not check_lark_cli():
-        print("\n⚠️  lark-cli 未安装或不可用，无法写入飞书表格。")
+        print("\n⚠️  无法连接飞书写入通道，请检查 .env 中的 LARK_APP_ID / LARK_APP_SECRET。")
         sys.exit(1)
 
     # 检查配置
@@ -852,11 +853,12 @@ def cmd_interactive() -> None:
 
 
 def cmd_check() -> None:
-    """检查 lark-cli 是否可用。"""
-    if check_lark_cli():
-        print("✅ lark-cli 可用")
+    """检查飞书 API 是否可用。"""
+    status = check_lark_api()
+    if status.get("available"):
+        print("✅ 飞书 API 可用")
     else:
-        print("❌ lark-cli 未安装或不可用")
+        print(f"❌ 飞书 API 不可用: {status.get('message', '')}")
 
 
 def cmd_poster(image_path: str) -> None:
@@ -878,9 +880,9 @@ def cmd_poster(image_path: str) -> None:
     print("🤖 AI 正在解析海报内容...")
     parsed = ai_extract_all(title="", raw_content=text, product_type="ticket")
 
-    # 检查 lark-cli
+    # 检查飞书 API 可用性
     if not check_lark_cli():
-        print("⚠️  lark-cli 未安装或不可用，无法写入飞书表格。")
+        print("⚠️  无法连接飞书写入通道，请检查 .env 中的 LARK_APP_ID / LARK_APP_SECRET。")
         sys.exit(1)
 
     # 检查配置

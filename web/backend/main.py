@@ -38,9 +38,11 @@ from src.main import (
     cmd_extract,
 )
 from src.extractor import XiumiusExtractor
+from src import lark_client
 from src.lark_writer import (
     append_row_by_cols,
     check_lark_cli,
+    check_lark_api,
     load_config,
     get_spreadsheet_token,
     get_sheet_name,
@@ -147,9 +149,11 @@ class CalcSettlementResponse(BaseModel):
 
 
 class CheckResponse(BaseModel):
-    lark_cli_available: bool
+    lark_cli_available: bool          # 兼容旧字段名，现表示飞书 API 是否可用
     config_exists: bool
     spreadsheet_token: str
+    lark_api_available: bool = False  # 新增：飞书 API 可用性
+    lark_api_message: str = ""        # 新增：不可用时的原因
 
 
 # ============================================================
@@ -160,7 +164,8 @@ class CheckResponse(BaseModel):
 @app.get("/api/check", response_model=CheckResponse)
 async def api_check():
     """检查环境配置。"""
-    lark_ok = check_lark_cli()
+    status = check_lark_api()
+    lark_ok = status.get("available", False)
     config_path = Path(project_root) / "config.yaml"
     config_ok = config_path.exists()
     token = ""
@@ -173,6 +178,8 @@ async def api_check():
         lark_cli_available=lark_ok,
         config_exists=config_ok,
         spreadsheet_token=token,
+        lark_api_available=lark_ok,
+        lark_api_message="" if lark_ok else status.get("message", ""),
     )
 
 
@@ -1008,17 +1015,8 @@ async def api_recalc_settlement(req: RecalcRequest):
 
         # 读取所有行
         col_letter = chr(65 + max(live_idx, settle_idx, remark_idx or 0, surcharge_idx or 0, type_idx or 0))
-        range_str = f"{sheet_id}!A:{col_letter}"
-        cmd = [
-            "lark-cli", "sheets", "+read",
-            "--spreadsheet-token", token,
-            "--sheet-id", sheet_id,
-            "--range", range_str,
-            "--as", "bot",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        data = json.loads(result.stdout)
-        values = data.get("data", {}).get("valueRange", {}).get("values", [])
+        range_str = f"A:{col_letter}"
+        values = lark_client.read_values(token, sheet_id, range_str)
 
         if len(values) <= 1:
             return RecalcResponse(success=False, message="表格中没有数据行")
@@ -1072,17 +1070,8 @@ async def api_recalc_settlement(req: RecalcRequest):
             # 更新该行的结算价列
             row_num = row_idx + 1  # 1-based
             settle_col = chr(65 + settle_idx)
-            cell_range = f"{sheet_id}!{settle_col}{row_num}"
-            values_json = json.dumps([[settlement]], ensure_ascii=False)
-            write_cmd = [
-                "lark-cli", "sheets", "+write",
-                "--spreadsheet-token", token,
-                "--sheet-id", sheet_id,
-                "--range", cell_range,
-                "--values", values_json,
-                "--as", "bot",
-            ]
-            subprocess.run(write_cmd, capture_output=True, text=True)
+            cell_range = f"{settle_col}{row_num}"
+            lark_client.update_values(token, sheet_id, cell_range, [[settlement]])
             updated += 1
 
         return RecalcResponse(
@@ -1132,42 +1121,37 @@ async def api_create_sheet():
     headers = [
         "填写日期", "产品类型", "酒店/景区", "产品信息", "套票名称",
         "套票内容", "加收", "其他加收", "售卖时间", "可用日期",
-        "对外价格", "直播价", "结算价格&利润率（已除平台）", "备注", "海报",
+        "对外价格", "直播价", "结算价格&利润率（已除平台）", "供应商信息", "海报",
     ]
-    headers_json = json.dumps(headers, ensure_ascii=False)
-
-    cmd = [
-        "lark-cli", "sheets", "+create",
-        "--title", "hotels/tickets上品工具",
-        "--headers", headers_json,
-        "--as", "bot",
-    ]
-
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=60,
-        )
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="未找到 lark-cli 命令，请先安装飞书 CLI 工具")
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="创建表格超时")
+        created = lark_client.create_spreadsheet("hotels/tickets上品工具")
+        spreadsheet_token = created.get("spreadsheet_token", "")
+        url = created.get("url", "")
+        if not spreadsheet_token:
+            raise HTTPException(status_code=500, detail="创建表格返回数据异常")
 
-    if result.returncode != 0:
-        error_msg = result.stderr.strip() or result.stdout.strip()
-        raise HTTPException(status_code=500, detail=f"创建表格失败: {error_msg}")
+        # 应用创建的文档默认仅应用可访问，放开为组织内可编辑
+        share_ok = lark_client.set_tenant_editable(spreadsheet_token)
 
-    data = json.loads(result.stdout)
-    spreadsheet_token = data.get("data", {}).get("spreadsheet_token", "")
-    url = data.get("data", {}).get("url", "")
-
-    if not spreadsheet_token:
-        raise HTTPException(status_code=500, detail="创建表格返回数据异常")
+        # 新表默认 Sheet1，写入表头
+        sheets = lark_client.list_sheets(spreadsheet_token)
+        if sheets:
+            sheet_id = sheets[0]["sheet_id"]
+            end_col = chr(64 + len(headers))
+            lark_client.update_values(
+                spreadsheet_token, sheet_id, f"{sheet_id}!A1:{end_col}1", [headers]
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建表格失败: {e}")
 
     return {
         "success": True,
         "spreadsheet_token": spreadsheet_token,
         "url": url,
-        "message": "表格创建成功",
+        "tenant_editable": share_ok,
+        "message": "表格创建成功" + ("" if share_ok else "（提示：自动开放组织内编辑权限失败，请在飞书中手动添加协作者）"),
     }
 
 

@@ -190,20 +190,8 @@ def load_config():
 
 
 def get_sheet_id(spreadsheet_token: str, sheet_title: str) -> str:
-    cmd = [
-        "lark-cli", "sheets", "+info",
-        "--spreadsheet-token", spreadsheet_token,
-        "--as", "bot",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        raise RuntimeError(f"lark-cli 失败: {result.stderr}")
-    data = json.loads(result.stdout)
-    sheets = data.get("data", {}).get("sheets", {}).get("sheets", [])
-    for sheet in sheets:
-        if sheet.get("title") == sheet_title or sheet.get("sheet_id") == sheet_title:
-            return sheet["sheet_id"]
-    raise ValueError(f"未找到工作表 '{sheet_title}'")
+    from src import lark_client
+    return lark_client.find_sheet_id(spreadsheet_token, sheet_title)
 
 
 def write_row_at(col_data: dict, spreadsheet_token: str, sheet_id: str, row_num: int):
@@ -216,21 +204,11 @@ def write_row_at(col_data: dict, spreadsheet_token: str, sheet_id: str, row_num:
     for col_name in COLUMNS:
         row.append(col_data.get(col_name, ""))
 
-    range_str = f"A{row_num}:R{row_num}"
-    values_json = json.dumps([row], ensure_ascii=False)
+    end_col = chr(64 + len(COLUMNS))
+    range_str = f"A{row_num}:{end_col}{row_num}"
 
-    cmd = [
-        "lark-cli", "sheets", "+write",
-        "--spreadsheet-token", spreadsheet_token,
-        "--sheet-id", sheet_id,
-        "--range", range_str,
-        "--values", values_json,
-        "--as", "bot",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        raise RuntimeError(f"写入失败: {result.stderr}")
-    return json.loads(result.stdout)
+    from src import lark_client
+    return lark_client.update_values(spreadsheet_token, sheet_id, range_str, [row])
 
 
 # ============================================================
@@ -346,15 +324,8 @@ def main():
     if start_row == 0:
         # 自动获取当前行数
         try:
-            result = subprocess.run([
-                "lark-cli", "sheets", "+read",
-                "--spreadsheet-token", SPREADSHEET_TOKEN,
-                "--sheet-id", sheet_id,
-                "--range", "A:A",
-                "--as", "bot",
-            ], capture_output=True, text=True, timeout=60)
-            data = json.loads(result.stdout)
-            values = data.get("data", {}).get("valueRange", {}).get("values", [])
+            from src import lark_client
+            values = lark_client.read_values(SPREADSHEET_TOKEN, sheet_id, "A:A")
             start_row = len(values) + 1
         except Exception:
             start_row = 3  # 默认从第3行开始

@@ -1731,10 +1731,16 @@ async function init() {
         if (resp.ok) {
             const result = await resp.json();
             const badge = document.getElementById('statusBadge');
-            if (result.lark_cli_available) {
-                badge.innerHTML = '<i class="bi bi-circle-fill text-success me-1" style="font-size:0.5rem"></i>就绪';
+            const larkOk = result.lark_api_available !== undefined
+                ? result.lark_api_available
+                : result.lark_cli_available;
+            if (larkOk) {
+                badge.innerHTML = '<i class="bi bi-circle-fill text-success me-1" style="font-size:0.5rem"></i>飞书已就绪';
+                badge.title = '飞书应用凭证有效，可直接写入表格';
             } else {
-                badge.innerHTML = '<i class="bi bi-circle-fill text-warning me-1" style="font-size:0.5rem"></i>lark-cli 未安装';
+                const reason = result.lark_api_message || '未配置 LARK_APP_ID / LARK_APP_SECRET';
+                badge.innerHTML = '<i class="bi bi-circle-fill text-warning me-1" style="font-size:0.5rem"></i>飞书未就绪';
+                badge.title = '飞书鉴权失败：' + reason;
             }
         }
     } catch (e) {
