@@ -135,6 +135,8 @@ class WriteResponse(BaseModel):
     success: bool
     message: str
     row_number: int = 0
+    dropped_columns: list = []   # 表头中不存在的列名，已被丢弃
+    empty_columns: list = []     # 表头中存在但值为空的列名
 
 
 class CalcSettlementRequest(BaseModel):
@@ -331,7 +333,15 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
 
     # 3. 全 AI 解析
     print(f"[DEBUG] ai mode: title={repr(title[:80])}, raw_content len={len(raw_content)}")
-    ai_result = ai_extract_all(title, raw_content, product_type=req.product_type)
+    try:
+        ai_result = ai_extract_all(title, raw_content, product_type=req.product_type)
+    except Exception as e:
+        # AI 不可用时直接报错，不能把全空字段当成解析结果返回给前端
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI 解析失败，请检查 DEEPSEEK_API_KEY 配置与网络：{e}",
+        )
+
     print(f"[DEBUG] ai_result={ai_result}")
     taopiao = ai_result.get("taopiao", "")
     content_items = ai_result.get("content_items", "")
@@ -352,6 +362,31 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
         title_price = re.search(r'(\d+(?:\.\d+)?)\s*一口价\s*=', title)
         if title_price:
             price = title_price.group(1) + "元/套"
+    # 兜底：标题里常见的"¥799抢…"、"799元抢…"格式
+    if not price:
+        yen_match = re.search(r'[¥￥]\s*(\d+(?:\.\d+)?)', title)
+        if not yen_match:
+            yen_match = re.search(r'(\d+(?:\.\d+)?)\s*元\s*抢', title)
+        if yen_match:
+            price = yen_match.group(1) + "元/套"
+    # 兜底：套票名称为空时，退化为标题行（总比空着可读）
+    if not taopiao and title.strip():
+        taopiao = title.strip()
+    # 兜底：加收为空时，尝试从原文"平日不加收""周六加收100元"等表述提取
+    if not surcharge:
+        surcharge_bits = re.findall(
+            r'(?:平日|周末|周六|周日|周五|节假日|中秋|国庆|春节|元旦)'
+            r'[^\n，。；]{0,12}?'
+            r'(?:不加收|加收\s*\d+(?:\.\d+)?\s*元?[^\n，。；]*)',
+            raw_text,
+        )
+        if surcharge_bits:
+            seen = []
+            for bit in surcharge_bits:
+                bit = bit.strip()
+                if bit and bit not in seen:
+                    seen.append(bit)
+            surcharge = "\n".join(seen)
 
     # 兜底：AI 没提取到返佣时，从原文提取"结算返"
     rebate = parsed.get("返佣", "")
@@ -578,7 +613,13 @@ async def api_ocr_with_text(
             ai_raw += "\n\n【海报原文信息（供参考）】\n" + ocr_clean.strip()
     else:
         ai_raw = ocr_clean
-    ai_result = ai_extract_all(title="", raw_content=ai_raw, product_type=product_type)
+    try:
+        ai_result = ai_extract_all(title="", raw_content=ai_raw, product_type=product_type)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI 解析失败，请检查 DEEPSEEK_API_KEY 配置与网络：{e}",
+        )
 
     # 从 OCR 结果中提取日期信息，覆盖 AI 提取的默认值
     # 文案+海报模式：海报中的日期信息应该被提取
@@ -943,6 +984,29 @@ async def api_write(req: WriteRequest):
             config = load_config(str(config_path))
             token = get_spreadsheet_token(config)
             sheet_name = get_sheet_name(config)
+        # 表头校验：row_data 中表头不存在的列会被静默丢弃，这里显式暴露出来
+        dropped_columns = []
+        empty_columns = []
+        try:
+            check_sheet_id = get_sheet_id(token, sheet_name)
+            valid_headers = [h for h in _get_header_row(token, check_sheet_id) if h]
+            if valid_headers:
+                dropped_columns = [k for k in row_data if k not in valid_headers]
+                empty_columns = [
+                    h for h in valid_headers
+                    if not str(row_data.get(h, "") or "").strip()
+                ]
+                if dropped_columns:
+                    logging.warning(
+                        f"[api_write] 以下列在表头中不存在，已丢弃: {dropped_columns}"
+                    )
+                if empty_columns:
+                    logging.warning(
+                        f"[api_write] 以下列写入为空: {empty_columns}"
+                    )
+        except Exception as e:
+            logging.warning(f"[api_write] 表头校验跳过: {e}")
+
         result = append_row_by_cols(row_data, spreadsheet_token=token, sheet_title=sheet_name)
         # 从返回结果中提取行号（_row_number 由 lark_writer 注入）
         row_number = 0
@@ -952,7 +1016,18 @@ async def api_write(req: WriteRequest):
                 row_number = result_data.get("_row_number", 0)
         except (json.JSONDecodeError, AttributeError, ValueError):
             pass
-        return WriteResponse(success=True, message="写入成功", row_number=row_number)
+        msg = "写入成功"
+        if empty_columns:
+            msg += f"；{len(empty_columns)} 列为空: {'、'.join(empty_columns[:5])}"
+        if dropped_columns:
+            msg += f"；{len(dropped_columns)} 列不在表头已丢弃: {'、'.join(dropped_columns[:5])}"
+        return WriteResponse(
+            success=True,
+            message=msg,
+            row_number=row_number,
+            dropped_columns=dropped_columns,
+            empty_columns=empty_columns,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"写入失败: {str(e)}")
 

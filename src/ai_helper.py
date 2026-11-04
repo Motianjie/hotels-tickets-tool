@@ -28,6 +28,11 @@ import requests
 # ============================================================
 # 配置
 # ============================================================
+# 从项目根目录 .env 加载凭证（不覆盖已存在的环境变量）。
+# 与 lark_client 共用同一份加载逻辑，保证两条链路读同一处配置。
+from src.lark_client import _load_dotenv
+_load_dotenv()
+
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
@@ -612,7 +617,8 @@ def ai_extract_all(title: str, raw_content: str, product_type: str = "hotel") ->
         return result
     except Exception as e:
         print(f"[ai_extract_all ERROR] {e}")
-        return result
+        # 不吞异常：调用方必须知道解析失败，否则会拿着全空字段继续写表
+        raise RuntimeError(f"AI 解析失败: {e}") from e
 
 
 if __name__ == "__main__":
