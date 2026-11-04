@@ -185,32 +185,52 @@ async def api_check():
     )
 
 
+# 票种词表：套票名称的【】里填票种，不是营销卖点词
+_TICKET_KINDS = [
+    '亲子票', '家庭票', '双人票', '单人票', '儿童票', '成人票', '学生票',
+    '老人票', '长者票', '团队票', '情侣票', '三人票', '年卡', '次卡',
+]
+
+
+def _detect_ticket_kind(text: str) -> str:
+    """
+    从门票名判断票种。
+    人群特征优先于人数特征："儿童蛛网单人票"是儿童票，不是单人票。
+    """
+    if re.search(r'\d+\s*大\s*\d+\s*小', text) or '一大一小' in text or '两大一小' in text:
+        return '家庭票'
+    # 人群词优先于人数词："黄线儿童蛛网单人票"是儿童票，不是单人票
+    if '儿童' in text or '小孩' in text or '亲子' in text:
+        return '儿童票'
+    if '老人' in text or '长者' in text:
+        return '老人票'
+    if '学生' in text:
+        return '学生票'
+    if '情侣' in text:
+        return '情侣票'
+    if '双人' in text or '2大' in text or '两大' in text:
+        return '双人票'
+    # 人群词再看票种词
+    for kind in ('家庭票', '三人票', '双人票', '成人票', '单人票', '团队票', '年卡', '次卡'):
+        if kind in text:
+            return kind
+    return '单人票'
+
+
 def _compose_ticket_pkg_name(raw_text: str, pkg_name: str, hotel_name: str) -> str:
     """
-    套票名称 = 【卖点词】景区名｜套餐名。
-    卖点词取自原始输入首行的【】前缀，景区名与套餐名之间用全角竖线分隔。
+    套票名称 = 【票种】景区名｜门票名，票种由门票名判断，景区名与门票名之间用全角竖线。
     """
-    first_line = raw_text.strip().split('\n')[0].strip() if raw_text.strip() else ""
-    bracket = re.match(r'^【([^】]+)】', first_line)
-
     if hotel_name and pkg_name.startswith(hotel_name):
         clean = pkg_name[len(hotel_name):].strip()
     else:
         clean = pkg_name.strip()
     clean = clean.lstrip('｜|~～+').strip() or pkg_name.strip()
 
-    # 卖点词只取词本身："【早场票9-12点】"→"早场票"，时间段属于限制不属于套餐名
-    highlight = ""
-    if bracket:
-        raw_mark = bracket.group(1)
-        raw_mark = re.sub(r'\d+(?:\.\d+)?\s*(?:点|时|:)\s*[-~～至到]\s*\d+(?:\.\d+)?\s*(?:点|时)?', '', raw_mark)
-        raw_mark = re.sub(r'\d+\s*[-~～至到]\s*\d+\s*(?:点|时)', '', raw_mark)
-        highlight = raw_mark.strip(' -~～至到')
-
+    kind = _detect_ticket_kind(clean)
     if not hotel_name:
-        return f"【{highlight}】{clean}" if highlight else clean
-    body = f"{hotel_name}｜{clean}"
-    return f"【{highlight}】{body}" if highlight else body
+        return f"【{kind}】{clean}"
+    return f"【{kind}】{hotel_name}｜{clean}"
 
 
 def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: str = "",
