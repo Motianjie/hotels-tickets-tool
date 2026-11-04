@@ -185,6 +185,34 @@ async def api_check():
     )
 
 
+def _compose_ticket_pkg_name(raw_text: str, pkg_name: str, hotel_name: str) -> str:
+    """
+    套票名称 = 【卖点词】景区名｜套餐名。
+    卖点词取自原始输入首行的【】前缀，景区名与套餐名之间用全角竖线分隔。
+    """
+    first_line = raw_text.strip().split('\n')[0].strip() if raw_text.strip() else ""
+    bracket = re.match(r'^【([^】]+)】', first_line)
+
+    if hotel_name and pkg_name.startswith(hotel_name):
+        clean = pkg_name[len(hotel_name):].strip()
+    else:
+        clean = pkg_name.strip()
+    clean = clean.lstrip('｜|~～+').strip() or pkg_name.strip()
+
+    # 卖点词只取词本身："【早场票9-12点】"→"早场票"，时间段属于限制不属于套餐名
+    highlight = ""
+    if bracket:
+        raw_mark = bracket.group(1)
+        raw_mark = re.sub(r'\d+(?:\.\d+)?\s*(?:点|时|:)\s*[-~～至到]\s*\d+(?:\.\d+)?\s*(?:点|时)?', '', raw_mark)
+        raw_mark = re.sub(r'\d+\s*[-~～至到]\s*\d+\s*(?:点|时)', '', raw_mark)
+        highlight = raw_mark.strip(' -~～至到')
+
+    if not hotel_name:
+        return f"【{highlight}】{clean}" if highlight else clean
+    body = f"{hotel_name}｜{clean}"
+    return f"【{highlight}】{body}" if highlight else body
+
+
 def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: str = "",
                           default_sell_time: str = "", default_available: str = "") -> list:
     """
@@ -231,9 +259,8 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
         pkg_name = re.sub(r'^[~/\\[\]太阳强\s（）()，,、]+', '', pkg_name).strip()
         # 去掉开头的字母+）或字母+）模式，如 "A票）"
         pkg_name = re.sub(r'^[A-Da-d]票[）\)]?\s*', '', pkg_name).strip()
-        # 拼接酒店名前缀
-        if hotel_name and not pkg_name.startswith(hotel_name):
-            pkg_name = f"{hotel_name}{pkg_name}"
+        # 名称还原：用标题行的【卖点】+景区名｜套餐名，避免"景区名+套餐名"裸拼
+        pkg_name = _compose_ticket_pkg_name(raw_text, pkg_name, hotel_name)
         pkg_order_id = order_ids[i] if i < len(order_ids) else ""
 
         # 生成套餐内容：门票产品只包含景区/项目信息，不包含价格返佣、适用日期、加收等
@@ -261,7 +288,13 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
                 continue
             desc_lines.append(line)
 
-        pkg_content = pkg_name
+        # 套票内容：景区名｜套餐名，与套票名称一致但不带【卖点】前缀
+        clean_name = re.sub(r'^【[^】]*】', '', pkg_name).strip()
+        if hotel_name and clean_name.startswith(hotel_name):
+            clean_name = clean_name[len(hotel_name):]
+        clean_name = clean_name.lstrip('｜|~～+').strip()
+        clean_name = clean_name or pkg_name
+        pkg_content = f"{hotel_name}｜{clean_name}" if hotel_name else clean_name
         if desc_lines:
             pkg_content += '，' + '，'.join(desc_lines)
 
