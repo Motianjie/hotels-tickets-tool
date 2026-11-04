@@ -332,7 +332,6 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
             raw_content = you_content
 
     # 3. 全 AI 解析
-    print(f"[DEBUG] ai mode: title={repr(title[:80])}, raw_content len={len(raw_content)}")
     try:
         ai_result = ai_extract_all(title, raw_content, product_type=req.product_type)
     except Exception as e:
@@ -342,7 +341,6 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
             detail=f"AI 解析失败，请检查 DEEPSEEK_API_KEY 配置与网络：{e}",
         )
 
-    print(f"[DEBUG] ai_result={ai_result}")
     taopiao = ai_result.get("taopiao", "")
     content_items = ai_result.get("content_items", "")
     surcharge = ai_result.get("surcharge", "")
@@ -937,14 +935,9 @@ async def api_write(req: WriteRequest):
     接收完整的列数据，自动计算结算价格&利润率。
     自动读取表格表头，将结算价填入匹配的列。
     """
-    row_data = dict(req.row_data)
-
-    # 调试日志
     import logging
-    logging.warning(f"[api_write] 收到 row_data keys: {list(row_data.keys())}")
-    for k in row_data:
-        if '结算' in k or '利润率' in k or '直播' in k or '返佣' in k:
-            logging.warning(f"[api_write] {k}={row_data[k]!r}")
+
+    row_data = dict(req.row_data)
 
     # 自动填入填写日期
     if not row_data.get("填写日期"):
