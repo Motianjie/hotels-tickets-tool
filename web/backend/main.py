@@ -367,9 +367,14 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
             yen_match = re.search(r'(\d+(?:\.\d+)?)\s*元\s*抢', title)
         if yen_match:
             price = yen_match.group(1) + "元/套"
-    # 兜底：套票名称为空时，退化为标题行（总比空着可读）
+    # 兜底：套票名称为空时，从标题拆出【卖点】+景区名，不要塞整条标题
     if not taopiao and title.strip():
-        taopiao = title.strip()
+        bracket = re.match(r'^【([^】]+)】', title.strip())
+        scene = re.match(r'^【[^】]*】\s*[\d.]+\s*元?\s*[抢秒售价超]?购?[！!]?\s*([^~～]+)', title.strip())
+        if bracket and scene:
+            taopiao = f"【{bracket.group(1)}】{scene.group(1).strip()}"
+        elif bracket:
+            taopiao = f"【{bracket.group(1)}】"
     # 兜底：加收为空时，尝试从原文"平日不加收""周六加收100元"等表述提取
     if not surcharge:
         surcharge_bits = re.findall(
@@ -400,21 +405,22 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
         if hotel_match:
             hotel_name = hotel_match.group(1)
 
-    # 门票产品：从文案第一行提取酒店名（~ 前面的部分，去掉"大门票"等后缀）
-    if req.product_type == "ticket":
+    # 门票产品：AI 已提取到景区名时直接采用，仅在为空时用正则兜底
+    if req.product_type == "ticket" and not hotel_name:
         first_line = raw_text.split('\n')[0].strip()
         name_match = re.match(r'^(.+?)[～~]', first_line)
         if name_match:
             raw_name = name_match.group(1).strip()
+            # 剥离"【早场票9-12点】"这类卖点前缀与"29.9元抢购！"这类促销语
+            raw_name = re.sub(r'^【[^】]*】', '', raw_name)
+            raw_name = re.sub(r'^[\d.]+\s*元?\s*[抢秒售价超]购?[！!~～\s]*', '', raw_name)
+            raw_name = re.sub(r'^[！!，,、~～\s]+', '', raw_name).strip()
             # 去掉"大门票"、"门票"等后缀，提取景区名
             scenic_match = re.match(r'^(.+?)(?:大门票|门票|景区|旅游)', raw_name)
             if scenic_match:
                 hotel_name = scenic_match.group(1).strip()
             else:
                 hotel_name = raw_name
-        elif not hotel_name:
-            # 取第一行前15个字作为酒店名
-            hotel_name = first_line[:15].strip()
 
     # 4. 日期/加收处理：优先用文案中的，文案没有则信任 LLM 从秀米提取的结果
     # 文案中有日期关键词时，用 parse_raw_input 提取的文案日期覆盖 LLM 结果
