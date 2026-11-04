@@ -687,9 +687,13 @@ def calc_settlement(parsed: dict, col_data: dict, product_type: str = "hotel") -
     except ValueError:
         return ""
 
-    # 提取深度返佣数字
+    # 提取深度返佣数字。
+    # 同时出现普返与深返（如"普返110，深返150"）时，一律以深返为准。
+    # 兼容"深返150"/"深返：150"/"深返 150"/"深度：150"等写法。
     deep_rebate = 0
-    deep_match = re.search(r'深返(\d+(?:\.\d+)?)', rebate)
+    deep_match = re.search(
+        r'(?:深返|深度|深)[ \t]*[：:]?[ \t]*(\d+(?:\.\d+)?)', rebate
+    )
     if deep_match:
         deep_rebate = float(deep_match.group(1))
 
