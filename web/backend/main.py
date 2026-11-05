@@ -234,7 +234,8 @@ def _compose_ticket_pkg_name(raw_text: str, pkg_name: str, hotel_name: str) -> s
 
 
 def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: str = "",
-                          default_sell_time: str = "", default_available: str = "") -> list:
+                          default_sell_time: str = "", default_available: str = "",
+                          product_type: str = "ticket") -> list:
     """
     从门票文案中解析多个套餐。
     返回 [{name, price, rebate, order_id, retail_price, settlement, content, surcharge, available_date}, ...]
@@ -279,6 +280,10 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
         pkg_name = re.sub(r'^[~/\\[\]太阳强\s（）()，,、]+', '', pkg_name).strip()
         # 去掉开头的字母+）或字母+）模式，如 "A票）"
         pkg_name = re.sub(r'^[A-Da-d]票[）\)]?\s*', '', pkg_name).strip()
+        # 价格前只剩数字/符号（如首行"…~99返7"），说明这段没有套餐名，
+        # 属于单套餐文案，交给 AI 结果，不要产出空的套餐行
+        if not re.search(r'[\u4e00-\u9fa5A-Za-z]', pkg_name):
+            continue
         # 名称还原：用标题行的【卖点】+景区名｜套餐名，避免"景区名+套餐名"裸拼
         pkg_name = _compose_ticket_pkg_name(raw_text, pkg_name, hotel_name)
         pkg_order_id = order_ids[i] if i < len(order_ids) else ""
@@ -327,7 +332,9 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
             deep_rebate = float(pkg_rebate)
             retail_price = int(live_num / 0.7)
             settlement = live_num - deep_rebate
-            profit_rate = (deep_rebate / live_num) - 0.05
+            # 平台成本按产品类型：酒店 8%，门票 5%（与 calc_settlement 口径一致）
+            platform_cost = 0.08 if product_type == "hotel" else 0.05
+            profit_rate = (deep_rebate / live_num) - platform_cost
             settlement_str = f"结算价{int(settlement)}；利润率{profit_rate*100:.1f}%"
         except (ValueError, ZeroDivisionError):
             retail_price = 0
@@ -548,7 +555,8 @@ async def api_parse_input(req: ParseInputRequest, user: dict = Depends(get_curre
             # 如果 ~ 后面直接是套餐信息（以【开头），则没有通用权益
             if not after_tilde.startswith('【'):
                 common_content = after_tilde
-        packages = parse_ticket_packages(raw_text, hotel_name=hotel_name, common_content=common_content)
+        packages = parse_ticket_packages(raw_text, hotel_name=hotel_name, common_content=common_content,
+                                        product_type=req.product_type)
 
     return ParseInputResponse(
         title=title,
@@ -921,7 +929,7 @@ async def api_ocr_with_text(
             })
     elif product_type == "ticket" and text and text.strip():
         # 兜底：AI没识别出多套餐时，用脚本解析
-        packages = parse_ticket_packages(text.strip())
+        packages = parse_ticket_packages(text.strip(), product_type=product_type)
 
     # 如果 packages 为空但文案中有结算价，包装成单套餐
     if not packages and text and text.strip():

@@ -125,8 +125,8 @@ def parse_raw_input(text: str) -> dict:
         if wenan_match:
             result["xiumius_url"] = wenan_match.group(1)
 
-    # 提取编号
-    id_match = re.search(r'编号[：:]\s*(\d+)', text)
+    # 提取编号：兼容"编号：123"与"编号123"（紧贴）两种写法
+    id_match = re.search(r'编号[：:]?\s*(\d+)', text)
     if id_match:
         result["编号"] = id_match.group(1)
 
@@ -164,6 +164,11 @@ def parse_raw_input(text: str) -> dict:
                 depth_only = re.search(r'(?:深度|深度[：:])\s*(\d+(?:\.\d+)?)', text)
                 if depth_only:
                     result["返佣"] = f"深返{depth_only.group(1)}"
+                else:
+                    # 短写法"99返7"：价格后紧跟返佣，取返佣数字作为深返
+                    short_fan = re.search(r'(\d+(?:\.\d+)?)\s*返\s*(\d+(?:\.\d+)?)', text)
+                    if short_fan:
+                        result["返佣"] = f"深返{short_fan.group(2)}"
 
     # 提取下单编号
     order_match = re.search(r'下单编号[：:]\s*(\d+)', text)
@@ -172,12 +177,23 @@ def parse_raw_input(text: str) -> dict:
 
     # 提取售卖时间（从文案中，如"抢购日期：即日起--售完即止"）
     # 注意：必须匹配"抢购日期"或"售卖时间"，不能匹配"抢购链接"
-    sell_match = re.search(r'(?:抢购日期|售卖时间|售卖日期)[：:]\s*(.+?)(?:\n|$)', text)
+    # 兼容"抢购时间:"、"产品抢购时间:"、"可售时间:"等写法，冒号全角半角都认
+    sell_match = re.search(
+        r'(?:产品|门票|套票)?\s*(?:抢购日期|抢购时间|售卖时间|售卖日期|可售时间)[：:]\s*(.+?)(?:\n|$)',
+        text,
+    )
     if sell_match:
         result["售卖时间"] = sell_match.group(1).strip()
 
     # 提取可用日期（从文案中，如"使用日期：即日起--2026年10月31日"）
-    avail_match = re.search(r'(?:使用|可用|有效|适用)[日期时间]*[：:]\s*(.+?)(?:\n|$)', text)
+    # 兼容"产品使用有效期:"、"套票有效期:"这类带前缀写法；
+    # "适用"必须后接日期/时间/期等词再加冒号，"套票适用:1成人+1名儿童"不能被当成日期
+    avail_match = re.search(
+        r'(?:产品|门票|套票)?\s*'
+        r'(?:(?:使用|可用|有效)[日期时间期限]*|适用[日期时间期限]+)'
+        r'[：:]\s*(.+?)(?:\n|$)',
+        text,
+    )
     if avail_match:
         result["可用日期"] = avail_match.group(1).strip()
 
