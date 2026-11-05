@@ -83,7 +83,8 @@ app.include_router(admin_router)
 
 class ParseInputRequest(BaseModel):
     raw_text: str
-    product_type: str = "hotel"
+    # 必填：决定走哪段提示词与佣金比例，不能默认成酒店
+    product_type: str
 
 
 class ParseInputResponse(BaseModel):
@@ -129,6 +130,8 @@ class OCRResponse(BaseModel):
 class WriteRequest(BaseModel):
     row_data: dict
     spreadsheet_token: Optional[str] = None
+    # 必填：api_write 会用 calc_settlement 重算结算价，漏传会默认按酒店 8% 覆盖掉前端算好的门票利润率
+    product_type: str
 
 
 class WriteResponse(BaseModel):
@@ -143,7 +146,8 @@ class CalcSettlementRequest(BaseModel):
     live_price: str
     rebate: str
     surcharge: str = ""
-    product_type: str = "hotel"
+    # 必填：漏传时旧默认值 hotel 会让门票产品静默按 8% 算，利润率少 3 个百分点
+    product_type: str
 
 
 class CalcSettlementResponse(BaseModel):
@@ -1016,7 +1020,7 @@ async def api_write(req: WriteRequest):
     surcharge = row_data.get("加收", "")
     if live_price and rebate:
         parsed_for_calc = {"返佣": rebate}
-        settlement = calc_settlement(parsed_for_calc, row_data)
+        settlement = calc_settlement(parsed_for_calc, row_data, product_type=req.product_type)
         if settlement:
             # 动态找到结算价列名
             token = req.spreadsheet_token

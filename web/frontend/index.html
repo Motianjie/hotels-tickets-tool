@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>hotels/tickets 上品工具</title>
     <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
@@ -1226,7 +1229,7 @@ async function parseRawInput() {
                 writeResp = await fetch(`${API_BASE}/api/write`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ row_data: rows[i], spreadsheet_token: token }),
+                    body: JSON.stringify({ row_data: rows[i], spreadsheet_token: token, product_type: getProductType() }),
                 });
             } else {
                 writeResp = await fetch(`${API_BASE}/api/excel/write`, {
@@ -1486,7 +1489,7 @@ async function ocrPoster() {
                 writeResp = await fetch(`${API_BASE}/api/write`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ row_data: rows[i], spreadsheet_token: token }),
+                    body: JSON.stringify({ row_data: rows[i], spreadsheet_token: token, product_type: getProductType() }),
                 });
             } else {
                 writeResp = await fetch(`${API_BASE}/api/excel/write`, {
@@ -1685,7 +1688,7 @@ async function doWrite(data, btnId, token) {
         const resp = await fetch(`${API_BASE}/api/write`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ row_data: data, spreadsheet_token: token }),
+            body: JSON.stringify({ row_data: data, spreadsheet_token: token, product_type: getProductType() }),
         });
         if (!resp.ok) {
             const err = await resp.json();
