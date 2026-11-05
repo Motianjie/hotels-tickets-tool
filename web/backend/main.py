@@ -204,7 +204,7 @@ def _detect_ticket_kind(text: str) -> str:
     if re.search(r'\d+\s*大\s*\d+\s*小', text) or '一大一小' in text or '两大一小' in text:
         return '家庭票'
     # 人群词优先于人数词："黄线儿童蛛网单人票"是儿童票，不是单人票
-    if '儿童' in text or '小孩' in text or '亲子' in text:
+    if '儿童' in text or '小孩' in text or '小童' in text or '亲子' in text:
         return '儿童票'
     if '老人' in text or '长者' in text:
         return '老人票'
@@ -214,6 +214,8 @@ def _detect_ticket_kind(text: str) -> str:
         return '情侣票'
     if '双人' in text or '2大' in text or '两大' in text:
         return '双人票'
+    if '成人' in text:
+        return '成人票'
     # 人群词再看票种词
     for kind in ('家庭票', '三人票', '双人票', '成人票', '单人票', '团队票', '年卡', '次卡'):
         if kind in text:
@@ -221,9 +223,21 @@ def _detect_ticket_kind(text: str) -> str:
     return '单人票'
 
 
+def _extract_scenic_name(raw_text: str) -> str:
+    """
+    从文案首行提取景区名，如"东莞隐贤山庄单潮汐海洋世界门票~【即买即用】成人128返12"
+    → 东莞隐贤山庄单潮汐海洋世界。取第一个价格/编号/标记之前的标题片段。
+    """
+    head = re.split(r'[\d.]+返\d+|(?:编|确认)?(?:号|码|碼)\d+|[～~\n]', raw_text, maxsplit=1)[0]
+    head = re.sub(r'^[\s【\[（(]+', '', head)
+    head = re.sub(r'[【\[（(][^】\]）)]*[】\]）)]', '', head)
+    head = re.sub(r'(门票|套票|票)$', '', head.strip())
+    return head.strip()
+
+
 def _compose_ticket_pkg_name(raw_text: str, pkg_name: str, hotel_name: str) -> str:
     """
-    套票名称 = 【票种】景区名｜门票名，票种由门票名判断，景区名与门票名之间用全角竖线。
+    套票名称 = 【票种】景区名｜票种+其他备注，票种由门票名判断，景区名与后面内容用全角竖线。
     """
     if hotel_name and pkg_name.startswith(hotel_name):
         clean = pkg_name[len(hotel_name):].strip()
@@ -231,10 +245,31 @@ def _compose_ticket_pkg_name(raw_text: str, pkg_name: str, hotel_name: str) -> s
         clean = pkg_name.strip()
     clean = clean.lstrip('｜|~～+').strip() or pkg_name.strip()
 
+    # 清掉噪声：文案里的编码/编号片段、[强] 等表情标记
+    clean = re.sub(r'(?:编|确认)?(?:号|码|碼)\s*\d+', '', clean)
+    clean = re.sub(r'\[强\]', '', clean)
+    # 【】里的内容若本身是票种就丢掉（票种另由 _detect_ticket_kind 判定），否则留作备注
+    bracket = re.match(r'^\s*【([^】]*)】', clean)
+    bracket_note = ""
+    if bracket:
+        inner = bracket.group(1).strip()
+        if inner and not re.search(r'票$|卡$', inner):
+            bracket_note = inner
+        clean = clean[bracket.end():]
+    clean = re.sub(r'^[～~+/、\s\[\]]+', '', clean).strip()
+
+    # 票种判定要在清完噪声之后，否则"编码50033127[强]小童/长者"会误判
     kind = _detect_ticket_kind(clean)
+    # 去掉开头的票种词本身（成人 / 小童/长者 / 单人票…），剩下的才是"其他备注"
+    body = re.sub(r'^(?:成人|单人|双人|儿童|小童|老人|长者|学生|亲子|情侣|家庭|三人|团队)(?:\s*/\s*(?:成人|单人|双人|儿童|小童|老人|长者|学生|亲子|情侣|家庭|三人|团队))*\s*(?:票|卡)?', '', clean).strip()
+    body = re.sub(r'^[～~+/、\s\[\]]+', '', body).strip()
+    # 括号里的卖点（如"即买即用"）排在正文备注之前
+    if bracket_note and bracket_note not in body:
+        body = f"{bracket_note}+{body}" if body else bracket_note
+    tail = f"{kind}+{body}" if body else kind
     if not hotel_name:
-        return f"【{kind}】{clean}"
-    return f"【{kind}】{hotel_name}｜{clean}"
+        return f"【{kind}】{tail}"
+    return f"【{kind}】{hotel_name}｜{tail}"
 
 
 def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: str = "",
@@ -248,7 +283,10 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
     加收规则：A票（双人套票）周六/日不适用，其他通用。
     """
     packages = []
-    order_ids = re.findall(r'编号(\d+)', raw_text)
+    # OCR 兜底链路不传 hotel_name，从首段标题里自取景区名，否则套票名称只剩票种
+    if not hotel_name:
+        hotel_name = _extract_scenic_name(raw_text)
+    order_ids = re.findall(r'(?:编|确认)?(?:号|码|碼)(\d+)', raw_text)
     pattern = r'([\d.]+)返(\d+)'
     matches = list(re.finditer(pattern, raw_text))
 
@@ -268,9 +306,18 @@ def parse_ticket_packages(raw_text: str, hotel_name: str = "", common_content: s
             segment = raw_text[name_start:matches[i].end()].strip().lstrip('/').lstrip('[强]').lstrip('～').lstrip('~')
         else:
             prev_end = matches[i-1].end()
-            id_match = re.search(r'/编号\d+', raw_text[prev_end:])
-            start = prev_end + id_match.end() if id_match else prev_end
-            segment = raw_text[start:matches[i].end()].strip().lstrip('/').lstrip('[强]').lstrip('+')
+            # 编号只可能是本段（上一个价格之后、本价格之前）里的第一个，
+            # 不能越过套餐名去找后面的 /编号，否则会把整段名称切掉
+            chunk = raw_text[prev_end:matches[i].start()]
+            id_match = re.search(r'/+(?:编|确认)?[号碼]\d+', chunk)
+            name_start = prev_end + (id_match.end() if id_match else 0)
+            segment = raw_text[name_start:matches[i].end()].strip()
+            # 名称被斜杠截断时（"小童/长者88返8"），把斜杠前那段补回来
+            if segment[:1] in ('/', '[') or not re.search(r'[\u4e00-\u9fa5A-Za-z]', segment):
+                lead = re.search(r'([^\n～~\[\]/+]+?)/+$', raw_text[:name_start])
+                if lead:
+                    segment = lead.group(1) + raw_text[name_start:matches[i].end()].strip()
+            segment = segment.lstrip('/').lstrip('[强]').lstrip('+').strip()
         segments.append(segment)
 
     for i, seg in enumerate(segments):
@@ -839,7 +886,7 @@ async def api_ocr_with_text(
                     pkg_rebate = common_rebate
 
                 # 提取下单编号
-                order_ids = re.findall(r'编号(\d+)', text)
+                order_ids = re.findall(r'(?:编|确认)?(?:号|码|碼)(\d+)', text)
                 pkg_order_id = order_ids[ai_packages.index(pkg)] if ai_packages.index(pkg) < len(order_ids) else ""
 
                 # 计算结算价
@@ -898,7 +945,7 @@ async def api_ocr_with_text(
                         except (ValueError, ZeroDivisionError):
                             pkg_settlement = f"结算价{int(float(settlement_match.group(1)))}"
 
-            # 构建套票名称：【套餐名】景区名~主体内容+差异项
+            # 构建套票名称：【票种】景区名｜票种+其他备注，与原始输入链路同一口径
             pkg_name_raw = pkg.get("name", "")
             hotel_name = ai_result.get("hotel_name", "")
             common_items = ai_result.get("common_items", "")
@@ -909,13 +956,13 @@ async def api_ocr_with_text(
             diff_keyword = ""
             if pkg_diff and pkg_diff.strip() not in ("无", "没有", ""):
                 diff_keyword = pkg_diff[:30]
-            if main_body:
-                if diff_keyword and diff_keyword not in main_body:
-                    pkg_taopiao_name = f"【{pkg_name_raw}】{hotel_name}~{main_body}+{diff_keyword}"
-                else:
-                    pkg_taopiao_name = f"【{pkg_name_raw}】{hotel_name}~{main_body}"
-            else:
-                pkg_taopiao_name = f"【{pkg_name_raw}】{hotel_name}~{diff_keyword}" if diff_keyword else f"【{pkg_name_raw}】{hotel_name}"
+            composed = _compose_ticket_pkg_name(pkg_name_raw, pkg_name_raw, hotel_name)
+            # 模型可能已把备注写进 name，重复的才追加
+            note = diff_keyword or main_body
+            if note and note[:8] not in composed:
+                kind = _detect_ticket_kind(pkg_name_raw)
+                composed = f"【{kind}】{hotel_name}｜{kind}+{note}" if hotel_name else f"【{kind}】{kind}+{note}"
+            pkg_taopiao_name = composed
 
             # 清理价格，去掉非数字字符
             pkg_price_clean = re.sub(r'[^0-9.]', '', pkg_price) if pkg_price else pkg_price
