@@ -235,6 +235,52 @@ def _extract_scenic_name(raw_text: str) -> str:
     return head.strip()
 
 
+# 价格档位词：399套餐 / 599元套餐 / 399档 等，属于价格标签不是套餐名
+_PRICE_TIER_RE = re.compile(r'^\s*[¥￥]?\s*\d+(?:\.\d+)?\s*(?:元)?\s*(?:套餐|档|套票|房|起)?\s*$')
+
+
+def _compose_hotel_pkg_name(pkg_name: str, hotel_name: str,
+                            main_body: str = "", diff_keyword: str = "") -> str:
+    """
+    酒店套票名称 = 【套餐名】酒店名称｜主体权益+差异项
+    方括号里只放套餐名（如"夏日畅玩套票"）；"399套餐"这类价格档位不是套餐名，一律丢弃。
+    """
+    name = (pkg_name or "").strip()
+    # 模型可能自带【】，先剥掉，避免出现双层括号
+    name = re.sub(r'^【([^】]*?)】$', r'\1', name)
+    name = re.sub(r'^【[^】]*】', '', name).strip() or name
+    # 价格档位（399套餐/599元套餐）不能当套餐名，剥掉后若为空就不写括号
+    if _PRICE_TIER_RE.match(name):
+        name = ""
+    head = f"【{name}】" if name else ""
+
+    # 酒店名去掉品牌并列（"享海温泉/亚投/假日/君廷酒店"只留第一个）与括号注解
+    if hotel_name:
+        hotel_name = re.split(r'[、/／]', hotel_name)[0].strip()
+        hotel_name = re.sub(r'[（(][^）)]*[）)]', '', hotel_name).strip()
+
+    # 权益拆成条目：顿号、逗号、分号、加号、换行都算分隔，只取前4项
+    items = []
+    for part in (diff_keyword, main_body):
+        for token in re.split(r'[、,，;；+＋/\n]+', part or ""):
+            # 去掉"（安排7楼以上）"这类补充说明，只留权益名
+            token = re.sub(r'[（(][^）)]*[）)]', '', token)
+            token = token.strip(" 　.。、")
+            if not token or len(token) > 20:
+                continue
+            if token not in items:
+                items.append(token)
+            if len(items) >= 4:
+                break
+        if len(items) >= 4:
+            break
+    tail = "+".join(items)
+
+    if not hotel_name:
+        return f"{head}{tail}" if head or tail else ""
+    return f"{head}{hotel_name}｜{tail}" if tail else f"{head}{hotel_name}"
+
+
 def _compose_ticket_pkg_name(raw_text: str, pkg_name: str, hotel_name: str) -> str:
     """
     套票名称 = 【票种】景区名｜票种+其他备注，票种由门票名判断，景区名与后面内容用全角竖线。
@@ -945,7 +991,7 @@ async def api_ocr_with_text(
                         except (ValueError, ZeroDivisionError):
                             pkg_settlement = f"结算价{int(float(settlement_match.group(1)))}"
 
-            # 构建套票名称：【票种】景区名｜票种+其他备注，与原始输入链路同一口径
+            # 构建套票名称：门票与酒店两套格式，各自与原始输入链路保持一致
             pkg_name_raw = pkg.get("name", "")
             hotel_name = ai_result.get("hotel_name", "")
             common_items = ai_result.get("common_items", "")
@@ -956,13 +1002,19 @@ async def api_ocr_with_text(
             diff_keyword = ""
             if pkg_diff and pkg_diff.strip() not in ("无", "没有", ""):
                 diff_keyword = pkg_diff[:30]
-            composed = _compose_ticket_pkg_name(pkg_name_raw, pkg_name_raw, hotel_name)
-            # 模型可能已把备注写进 name，重复的才追加
-            note = diff_keyword or main_body
-            if note and note[:8] not in composed:
-                kind = _detect_ticket_kind(pkg_name_raw)
-                composed = f"【{kind}】{hotel_name}｜{kind}+{note}" if hotel_name else f"【{kind}】{kind}+{note}"
-            pkg_taopiao_name = composed
+            if product_type == "hotel":
+                # 酒店口径：【套餐名】酒店名称·房型｜主体权益+差异项，不做票种改写
+                pkg_taopiao_name = _compose_hotel_pkg_name(
+                    pkg_name_raw, hotel_name, main_body, diff_keyword
+                )
+            else:
+                composed = _compose_ticket_pkg_name(pkg_name_raw, pkg_name_raw, hotel_name)
+                # 模型可能已把备注写进 name，重复的才追加
+                note = diff_keyword or main_body
+                if note and note[:8] not in composed:
+                    kind = _detect_ticket_kind(pkg_name_raw)
+                    composed = f"【{kind}】{hotel_name}｜{kind}+{note}" if hotel_name else f"【{kind}】{kind}+{note}"
+                pkg_taopiao_name = composed
 
             # 清理价格，去掉非数字字符
             pkg_price_clean = re.sub(r'[^0-9.]', '', pkg_price) if pkg_price else pkg_price
