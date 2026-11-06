@@ -238,43 +238,105 @@ def _extract_scenic_name(raw_text: str) -> str:
 # 价格档位词：399套餐 / 599元套餐 / 399档 等，属于价格标签不是套餐名
 _PRICE_TIER_RE = re.compile(r'^\s*[¥￥]?\s*\d+(?:\.\d+)?\s*(?:元)?\s*(?:套餐|档|套票|房|起)?\s*$')
 
+# 卖点前缀优先级，与 ai_helper.ai_generate_taopiao 的规则 2 保持一致
+_SELLING_POINTS = [
+    (r'不加收|不加价', '周末不加'),
+    (r'五一', '51一口价'),
+    (r'一口价', '一口价'),
+    (r'秒杀', '秒杀'),
+    (r'专场', '专场'),
+    (r'特惠', '特惠'),
+    (r'预售', '预售'),
+    (r'暑期', '暑期'),
+    (r'开园', '开园'),
+    (r'含晚餐|含双晚|含早|含双早', '含餐'),
+]
+
+# 房型关键词：这些都算房型，要固定排第一
+_ROOM_TYPE_RE = re.compile(
+    r'(海景|园景|山景|湖景|江景|城景|全景|日式|亲子|家庭|豪华|高级|标准|轻奢|loft|LOFT'
+    r'|大床|双床|双拼|三床|套房|公寓|别墅|洋房|木屋|帐篷|房车|榻榻米|阁楼|标间|单间)'
+)
+
+
+def _slim_right(token: str) -> str:
+    """
+    权益去修饰留核心名词：
+    "无限次1000m网红无边际海景泳池" → "无边际海景泳池"
+    "含双人自助早餐" → "双人早餐"
+    """
+    t = re.sub(r'[（(][^）)]*[）)]', '', token).strip(" 　.。、")
+    # 去掉"无限次""1000m""网红""单次""安排7楼以上"这类修饰与数量描述
+    t = re.sub(r'无限次|不限次|单次|\d+(?:\.\d+)?\s*(?:m|M|米|楼以上|楼|层)', '', t)
+    t = re.sub(r'网红|安排|指定|免费|畅玩|任玩', '', t)
+    # "含双人自助早餐" → "双人早餐"；"含双早" → "双人早餐"
+    if t.startswith('含'):
+        t = t[1:]
+    t = t.replace('双早', '双人早餐').replace('双晚', '双人晚餐')
+    # 去掉"自助"，再把重复的"早餐早餐/晚餐晚餐"收敛成一个
+    t = t.replace('自助', '')
+    t = re.sub(r'(早餐|晚餐|午餐)(?:早餐|晚餐|午餐)+', r'\1', t)
+    return t.strip(" 　.。、+-")
+
+
+def _pick_selling_point(text: str) -> str:
+    """按 ai_helper 的优先级从原文推理卖点；都没命中时用"主推"。"""
+    for pattern, label in _SELLING_POINTS:
+        if re.search(pattern, text or ''):
+            return label
+    return '主推'
+
 
 def _compose_hotel_pkg_name(pkg_name: str, hotel_name: str,
-                            main_body: str = "", diff_keyword: str = "") -> str:
+                            main_body: str = "", diff_keyword: str = "",
+                            raw_text: str = "") -> str:
     """
-    酒店套票名称 = 【套餐名】酒店名称｜主体权益+差异项
-    方括号里只放套餐名（如"夏日畅玩套票"）；"399套餐"这类价格档位不是套餐名，一律丢弃。
+    酒店套票名称 = 【卖点】酒店名称·房型｜权益+权益+权益
+    卖点按固定优先级推理；房型固定排第一；权益去修饰只留核心名词、最多 4 项。
     """
+    # 方括号里的卖点：优先用原文推理，模型给的真套餐名（非价格档位）也认
     name = (pkg_name or "").strip()
-    # 模型可能自带【】，先剥掉，避免出现双层括号
     name = re.sub(r'^【([^】]*?)】$', r'\1', name)
     name = re.sub(r'^【[^】]*】', '', name).strip() or name
-    # 价格档位（399套餐/599元套餐）不能当套餐名，剥掉后若为空就不写括号
-    if _PRICE_TIER_RE.match(name):
-        name = ""
+    if not name or _PRICE_TIER_RE.match(name):
+        name = _pick_selling_point(raw_text or f"{main_body}{diff_keyword}")
     head = f"【{name}】" if name else ""
 
-    # 酒店名去掉品牌并列（"享海温泉/亚投/假日/君廷酒店"只留第一个）与括号注解
+    # 酒店名去掉品牌并列与括号注解
     if hotel_name:
         hotel_name = re.split(r'[、/／]', hotel_name)[0].strip()
         hotel_name = re.sub(r'[（(][^）)]*[）)]', '', hotel_name).strip()
 
-    # 权益拆成条目：顿号、逗号、分号、加号、换行都算分隔，只取前4项
-    items = []
+    # 拆权益条目：顿号、逗号、分号、加号、换行、·都算分隔
+    tokens = []
     for part in (diff_keyword, main_body):
-        for token in re.split(r'[、,，;；+＋/\n]+', part or ""):
-            # 去掉"（安排7楼以上）"这类补充说明，只留权益名
-            token = re.sub(r'[（(][^）)]*[）)]', '', token)
+        for token in re.split(r'[、,，;；+＋/／\n·]+', part or ""):
             token = token.strip(" 　.。、")
-            if not token or len(token) > 20:
-                continue
-            if token not in items:
-                items.append(token)
-            if len(items) >= 4:
-                break
-        if len(items) >= 4:
+            if token and token not in tokens:
+                tokens.append(token)
+
+    # 房型固定排第一
+    room = ""
+    rest = []
+    for token in tokens:
+        slim = _slim_right(token)
+        if not slim:
+            continue
+        if not room and _ROOM_TYPE_RE.search(token):
+            room = slim
+        else:
+            rest.append(slim)
+
+    items = ([room] if room else []) + [t for t in rest if t != room]
+    # 去重并只留 4 项
+    seen, picked = set(), []
+    for t in items:
+        if t and t not in seen:
+            seen.add(t)
+            picked.append(t)
+        if len(picked) >= 4:
             break
-    tail = "+".join(items)
+    tail = "+".join(picked)
 
     if not hotel_name:
         return f"{head}{tail}" if head or tail else ""
@@ -1005,7 +1067,8 @@ async def api_ocr_with_text(
             if product_type == "hotel":
                 # 酒店口径：【套餐名】酒店名称·房型｜主体权益+差异项，不做票种改写
                 pkg_taopiao_name = _compose_hotel_pkg_name(
-                    pkg_name_raw, hotel_name, main_body, diff_keyword
+                    pkg_name_raw, hotel_name, main_body, diff_keyword,
+                    raw_text=text or "",
                 )
             else:
                 composed = _compose_ticket_pkg_name(pkg_name_raw, pkg_name_raw, hotel_name)
